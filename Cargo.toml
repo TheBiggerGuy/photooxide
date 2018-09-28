@@ -1,0 +1,18 @@
+[package]
+name = "photooxide"
+version = "0.1.0"
+authors = ["Guy Taylor <thebigguy.co.uk@gmail.com>"]
+
+[dependencies]
+google-photoslibrary1 = { git = "https://github.com/TheBiggerGuy/google-apis-rs", path = "gen/photoslibrary1", branch = "photoslibrary_str_int" }
+fuse = "0.3.1"
+hyper = "^ 0.10"
+hyper-rustls = "^0.6"
+yup-oauth2 = "^ 1.0"
+serde = "*"
+serde_json = "*"
+serde_derive = "*"
+time = "*"
+env_logger = "*"
+libc = "*"
+log = "*"
