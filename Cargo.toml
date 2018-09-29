@@ -16,5 +16,7 @@ time = "*"
 env_logger = "*"
 libc = "*"
 log = "*"
-sqlite = "*"
 chrono = "0.4"
+[dependencies.rusqlite]
+version = "0.14.0"
+features = ["bundled"]

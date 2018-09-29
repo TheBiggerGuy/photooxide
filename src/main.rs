@@ -14,7 +14,7 @@ extern crate serde;
 extern crate serde_json;
 extern crate yup_oauth2 as oauth2;
 
-extern crate sqlite;
+extern crate rusqlite;
 
 extern crate chrono;
 
@@ -28,6 +28,9 @@ use oauth2::{
 };
 use photoslibrary1::PhotosLibrary;
 use serde_json as json;
+
+mod db;
+use db::*;
 
 mod photolib;
 use photolib::*;
@@ -66,7 +69,8 @@ fn main() {
 
     let photos_library = PhotosLibrary::new(http_client, auth);
 
-    let db = sqlite::open("cache.sqlite").unwrap();
+    let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
+    let db = SqliteDb::new(sqlite_connection).unwrap();
 
     let db_backed_photo_lib = DbBackedPhotoLib::new(photos_library, db).unwrap();
 

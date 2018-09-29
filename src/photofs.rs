@@ -191,83 +191,74 @@ where
             return;
         }
 
-        let entries: Vec<(u64, fuse::FileType, String)> =
-            if ino == FIXED_INODE_ROOT {
-                debug!("FS readdir is for root");
-                vec![
-                    (
-                        FIXED_INODE_ROOT,
-                        FileType::Directory,
-                        String::from("."),
-                    ),
-                    (
-                        FIXED_INODE_ROOT,
-                        FileType::Directory,
-                        String::from(".."),
-                    ),
-                    (
-                        FIXED_INODE_ALBUMS,
-                        FileType::Directory,
-                        String::from("albums"),
-                    ),
-                    (
-                        FIXED_INODE_MEDIA,
-                        FileType::Directory,
-                        String::from("media"),
-                    ),
-                    (
-                        FIXED_INODE_HELLO_WORLD,
-                        FileType::RegularFile,
-                        String::from("hello.txt"),
-                    ),
-                ]
-            } else if ino == FIXED_INODE_ALBUMS {
-                debug!("FS readdir is for albums");
-                let mut entries = Vec::new();
-                let result = self.photo_lib.albums();
-                match result {
-                    Ok(album_titles) => {
-                        debug!("Success: listing albums");
-                        for album_title in album_titles.iter() {
-                            debug!("album_title: {}", album_title);
-                            entries.push((
-                                FIXED_INODE_HELLO_WORLD,
-                                FileType::RegularFile,
-                                album_title.clone(),
-                            ));
-                        }
-                    }
-                    Err(error) => {
-                        warn!("Failed backend listing albums: {:?}", error);
+        let entries: Vec<(u64, fuse::FileType, String)> = if ino == FIXED_INODE_ROOT {
+            debug!("FS readdir is for root");
+            vec![
+                (FIXED_INODE_ROOT, FileType::Directory, String::from(".")),
+                (FIXED_INODE_ROOT, FileType::Directory, String::from("..")),
+                (
+                    FIXED_INODE_ALBUMS,
+                    FileType::Directory,
+                    String::from("albums"),
+                ),
+                (
+                    FIXED_INODE_MEDIA,
+                    FileType::Directory,
+                    String::from("media"),
+                ),
+                (
+                    FIXED_INODE_HELLO_WORLD,
+                    FileType::RegularFile,
+                    String::from("hello.txt"),
+                ),
+            ]
+        } else if ino == FIXED_INODE_ALBUMS {
+            debug!("FS readdir is for albums");
+            let mut entries = Vec::new();
+            let result = self.photo_lib.albums();
+            match result {
+                Ok(album_titles) => {
+                    debug!("Success: listing albums");
+                    for album_title in album_titles.iter() {
+                        debug!("album_title: {}", album_title);
+                        entries.push((
+                            FIXED_INODE_HELLO_WORLD,
+                            FileType::RegularFile,
+                            album_title.clone(),
+                        ));
                     }
                 }
-                entries
-            } else if ino == FIXED_INODE_MEDIA {
-                debug!("FS readdir is for media");
-                let mut entries = Vec::new();
-                let result = self.photo_lib.media();
-                match result {
-                    Ok(media_filenames) => {
-                        debug!("Success: listing media");
-                        for media_filename in media_filenames.iter() {
-                            debug!("media_filename: {}", media_filename);
-                            entries.push((
-                                FIXED_INODE_HELLO_WORLD,
-                                FileType::RegularFile,
-                                media_filename.clone(),
-                            ));
-                        }
-                    }
-                    Err(error) => {
-                        warn!("Failed backend listing media: {:?}", error);
+                Err(error) => {
+                    warn!("Failed backend listing albums: {:?}", error);
+                }
+            }
+            entries
+        } else if ino == FIXED_INODE_MEDIA {
+            debug!("FS readdir is for media");
+            let mut entries = Vec::new();
+            let result = self.photo_lib.media();
+            match result {
+                Ok(media_filenames) => {
+                    debug!("Success: listing media");
+                    for media_filename in media_filenames.iter() {
+                        debug!("media_filename: {}", media_filename);
+                        entries.push((
+                            FIXED_INODE_HELLO_WORLD,
+                            FileType::RegularFile,
+                            media_filename.clone(),
+                        ));
                     }
                 }
-                entries
-            } else {
-                debug!("FS readdir is for ?? error");
-                reply.error(ENOENT);
-                return;
-            };
+                Err(error) => {
+                    warn!("Failed backend listing media: {:?}", error);
+                }
+            }
+            entries
+        } else {
+            debug!("FS readdir is for ?? error");
+            reply.error(ENOENT);
+            return;
+        };
 
         let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
         for (offset, entry) in entries.into_iter().enumerate().skip(to_skip) {

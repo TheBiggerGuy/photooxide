@@ -2,27 +2,37 @@ extern crate google_photoslibrary1 as photoslibrary1;
 extern crate hyper;
 extern crate yup_oauth2 as oauth2;
 
-extern crate sqlite;
+extern crate rusqlite;
 
 extern crate chrono;
 extern crate time;
 
 use std::borrow::BorrowMut;
-use std::collections::HashSet;
+use std::convert::From;
 use std::option::Option;
 use std::result::Result;
 
 use photoslibrary1::{Error, PhotosLibrary};
 
-use chrono::prelude::*;
-use chrono::{TimeZone, Utc};
+use chrono::Utc;
 use time::Duration;
+
+use db::{DbError, PhotoDb};
 
 #[derive(Debug)]
 pub enum PhotoLibError {
-    SqlError(sqlite::Error),
+    SqlError(rusqlite::Error),
     CorruptDatabase,
     GoogleBackendError,
+}
+
+impl From<DbError> for PhotoLibError {
+    fn from(error: DbError) -> Self {
+        match error {
+            DbError::SqlError(sql_error) => PhotoLibError::SqlError(sql_error),
+            DbError::CorruptDatabase => PhotoLibError::CorruptDatabase,
+        }
+    }
 }
 
 pub trait PhotoLib: Sized {
@@ -30,72 +40,34 @@ pub trait PhotoLib: Sized {
     fn albums(&self) -> Result<Vec<String>, PhotoLibError>;
 }
 
-fn ensure_schema(db: &sqlite::Connection) -> Result<(), PhotoLibError> {
-    db.execute("CREATE TABLE IF NOT EXISTS albums (id TEXT PRIMARY KEY, title TEXT, last_modified INTEGER);")
-        .map_err(|err| PhotoLibError::SqlError(err))?;
-    db.execute("CREATE TABLE IF NOT EXISTS media_items (id TEXT PRIMARY KEY, filename TEXT, last_modified INTEGER);")
-        .map_err(|err| PhotoLibError::SqlError(err))?;
-    Result::Ok(())
-}
-
-pub struct DbBackedPhotoLib<C, A>
+pub struct DbBackedPhotoLib<C, A, D>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
+    D: PhotoDb,
 {
     photos_library: PhotosLibrary<C, A>,
-    db: sqlite::Connection,
+    db: D,
 }
 
-impl<C, A> DbBackedPhotoLib<C, A>
+impl<C, A, D> DbBackedPhotoLib<C, A, D>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
+    D: PhotoDb,
 {
     pub fn new(
         photos_library: PhotosLibrary<C, A>,
-        db: sqlite::Connection,
-    ) -> Result<DbBackedPhotoLib<C, A>, PhotoLibError> {
-        ensure_schema(&db)?;
+        db: D,
+    ) -> Result<DbBackedPhotoLib<C, A, D>, PhotoLibError> {
         Result::Ok(DbBackedPhotoLib { photos_library, db })
-    }
-
-    fn last_updated_media(&self) -> Result<Option<DateTime<Utc>>, PhotoLibError> {
-        self.last_updated_x("media_items")
-    }
-
-    fn last_updated_album(&self) -> Result<Option<DateTime<Utc>>, PhotoLibError> {
-        self.last_updated_x("albums")
-    }
-
-    fn last_updated_x(&self, table: &str) -> Result<Option<DateTime<Utc>>, PhotoLibError> {
-        let mut statment = self
-            .db
-            .prepare(format!("SELECT MIN(last_modified) FROM {};", table))
-            .map_err(|err| PhotoLibError::SqlError(err))?;
-        let mut results = Vec::new();
-        loop {
-            if statment.next().unwrap() == sqlite::State::Done {
-                break;
-            }
-            let last_modified: i64 = statment.read(0).unwrap();
-            results.push(last_modified);
-        }
-        if results.len() == 0 {
-            return Result::Ok(Option::None);
-        } else if results.len() == 1 {
-            let last_modified = results.pop().unwrap();
-            return Result::Ok(Option::Some(Utc::timestamp(&Utc, last_modified, 0)));
-        } else {
-            return Result::Err(PhotoLibError::CorruptDatabase);
-        }
     }
 
     fn update_media_allowed_staleness(
         &self,
         allowed_staleness: Duration,
     ) -> Result<(), PhotoLibError> {
-        let last_updated_media_option = self.last_updated_media()?;
+        let last_updated_media_option = self.db.last_updated_media()?;
         let should_update = match last_updated_media_option {
             Some(last_updated_media) => (Utc::now() - last_updated_media) > allowed_staleness,
             None => true,
@@ -112,7 +84,7 @@ where
         &self,
         allowed_staleness: Duration,
     ) -> Result<(), PhotoLibError> {
-        let last_updated_media_option = self.last_updated_album()?;
+        let last_updated_media_option = self.db.last_updated_album()?;
         let should_update = match last_updated_media_option {
             Some(last_updated_media) => (Utc::now() - last_updated_media) > allowed_staleness,
             None => true,
@@ -154,23 +126,12 @@ where
                 },
                 Ok(res) => {
                     debug!("Success: listing photod");
-                    let mut statment = self
-                            .db
-                            .prepare("INSERT OR REPLACE INTO media_items (id, filename, last_modified) VALUES (?, ?, ?);")
-                            .map_err(|err| PhotoLibError::SqlError(err))?;
-                    let last_modified_time_unix = last_modified_time.timestamp() as i64;
                     for media_item in res.1.media_items.unwrap().into_iter() {
-                        statment.reset().unwrap();
-                        statment.bind(1, media_item.id.unwrap().as_str()).unwrap();
-                        statment
-                            .bind(2, media_item.filename.unwrap().as_str())
-                            .unwrap();
-                        statment.bind(3, last_modified_time_unix).unwrap();
-                        loop {
-                            if statment.next().unwrap() == sqlite::State::Done {
-                                break;
-                            }
-                        }
+                        self.db.insert_media(
+                            media_item.id.unwrap(),
+                            media_item.filename.unwrap(),
+                            last_modified_time,
+                        )?
                     }
 
                     page_token = res.1.next_page_token;
@@ -212,21 +173,12 @@ where
                 },
                 Ok(res) => {
                     debug!("Success: listing albums");
-                    let mut statment = self
-                            .db
-                            .prepare("INSERT OR REPLACE INTO albums (id, title, last_modified) VALUES (?, ?, ?);")
-                            .map_err(|err| PhotoLibError::SqlError(err))?;
-                    let last_modified_time_unix = last_modified_time.timestamp() as i64;
                     for album in res.1.albums.unwrap().into_iter() {
-                        statment.reset().unwrap();
-                        statment.bind(1, album.id.unwrap().as_str()).unwrap();
-                        statment.bind(2, album.title.unwrap().as_str()).unwrap();
-                        statment.bind(3, last_modified_time_unix).unwrap();
-                        loop {
-                            if statment.next().unwrap() == sqlite::State::Done {
-                                break;
-                            }
-                        }
+                        self.db.insert_album(
+                            album.id.unwrap(),
+                            album.title.unwrap(),
+                            last_modified_time,
+                        )?;
                     }
 
                     page_token = res.1.next_page_token;
@@ -240,45 +192,19 @@ where
     }
 }
 
-impl<C, A> PhotoLib for DbBackedPhotoLib<C, A>
+impl<C, A, D> PhotoLib for DbBackedPhotoLib<C, A, D>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
+    D: PhotoDb,
 {
     fn media(&self) -> Result<Vec<String>, PhotoLibError> {
         self.update_media_allowed_staleness(Duration::minutes(30))?;
-
-        let mut filenames: HashSet<String> = HashSet::new();
-        let mut statment = self
-            .db
-            .prepare("SELECT filename FROM media_items;")
-            .unwrap();
-        loop {
-            if statment.next().unwrap() == sqlite::State::Done {
-                break;
-            }
-            let filename: String = statment.read(0).unwrap();
-            debug!("filename: {}", filename);
-            filenames.insert(filename);
-        }
-        let filenames_vec = filenames.into_iter().collect();
-        Result::Ok(filenames_vec)
+        self.db.media().map_err(PhotoLibError::from)
     }
 
     fn albums(&self) -> Result<Vec<String>, PhotoLibError> {
         self.update_albums_allowed_staleness(Duration::minutes(30))?;
-
-        let mut titles: HashSet<String> = HashSet::new();
-        let mut statment = self.db.prepare("SELECT title FROM albums;").unwrap();
-        loop {
-            if statment.next().unwrap() == sqlite::State::Done {
-                break;
-            }
-            let title: String = statment.read(0).unwrap();
-            debug!("Title: {}", title);
-            titles.insert(title);
-        }
-        let titles_vec = titles.into_iter().collect();
-        Result::Ok(titles_vec)
+        self.db.albums().map_err(PhotoLibError::from)
     }
 }
