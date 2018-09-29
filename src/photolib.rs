@@ -268,7 +268,7 @@ where
     fn albums(&self) -> Result<Vec<String>, PhotoLibError> {
         self.update_albums_allowed_staleness(Duration::minutes(30))?;
 
-        let mut titles: Vec<String> = Vec::new();
+        let mut titles: HashSet<String> = HashSet::new();
         let mut statment = self.db.prepare("SELECT title FROM albums;").unwrap();
         loop {
             if statment.next().unwrap() == sqlite::State::Done {
@@ -276,8 +276,9 @@ where
             }
             let title: String = statment.read(0).unwrap();
             debug!("Title: {}", title);
-            titles.push(title);
+            titles.insert(title);
         }
-        Result::Ok(titles)
+        let titles_vec = titles.into_iter().collect();
+        Result::Ok(titles_vec)
     }
 }

@@ -272,9 +272,12 @@ where
         let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
         for (offset, entry) in entries.into_iter().enumerate().skip(to_skip) {
             debug!("Adding to response");
-            let is_full = reply.add(entry.0, offset as i64, entry.1, entry.2);
+            let ino = entry.0;
+            let kind = entry.1;
+            let name = entry.2;
+            let is_full = reply.add(ino, offset as i64, kind, name);
             if is_full {
-                debug!("is_full");
+                info!("is_full: to_skip={} offset={}", to_skip, offset);
                 break;
             }
         }
