@@ -4,8 +4,8 @@ extern crate log;
 extern crate env_logger;
 
 extern crate fuse;
-extern crate time;
 extern crate libc;
+extern crate time;
 
 extern crate google_photoslibrary1 as photoslibrary1;
 extern crate hyper;
@@ -15,6 +15,8 @@ extern crate serde_json;
 extern crate yup_oauth2 as oauth2;
 
 extern crate sqlite;
+
+extern crate chrono;
 
 use std::env;
 use std::ffi::OsStr;
@@ -66,7 +68,7 @@ fn main() {
 
     let db = sqlite::open("cache.sqlite").unwrap();
 
-    let db_backed_photo_lib = DbBackedPhotoLib::new(photos_library, db);
+    let db_backed_photo_lib = DbBackedPhotoLib::new(photos_library, db).unwrap();
 
     let fs = PhotoFs::new(db_backed_photo_lib);
 
