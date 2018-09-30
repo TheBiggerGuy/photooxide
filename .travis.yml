@@ -18,6 +18,7 @@ addons:
 
 before_script:
   - rustup component add clippy-preview
+  - rustup component add rustfmt-preview
   - mv client_secret.travis.json client_secret.json
 script:
   # build
