@@ -12,7 +12,7 @@ use std::convert::From;
 use std::option::Option;
 use std::result::Result;
 
-use photoslibrary1::{Error, PhotosLibrary};
+use photoslibrary1::PhotosLibrary;
 
 use chrono::Utc;
 use time::Duration;
@@ -23,7 +23,7 @@ use db::{DbError, PhotoDb};
 pub enum PhotoLibError {
     SqlError(rusqlite::Error),
     CorruptDatabase,
-    GoogleBackendError,
+    GoogleBackendError(photoslibrary1::Error),
 }
 
 impl From<DbError> for PhotoLibError {
@@ -32,6 +32,12 @@ impl From<DbError> for PhotoLibError {
             DbError::SqlError(sql_error) => PhotoLibError::SqlError(sql_error),
             DbError::CorruptDatabase => PhotoLibError::CorruptDatabase,
         }
+    }
+}
+
+impl From<photoslibrary1::Error> for PhotoLibError {
+    fn from(error: photoslibrary1::Error) -> Self {
+        PhotoLibError::GoogleBackendError(error)
     }
 }
 
@@ -108,24 +114,12 @@ where
             let result = result_builder.doit();
 
             match result {
-                Err(e) => match e {
-                    // The Error enum provides details about what exactly happened.
-                    // You can also just use its `Debug`, `Display` or `Error` traits
-                    Error::HttpError(_)
-                    | Error::MissingAPIKey
-                    | Error::MissingToken(_)
-                    | Error::Cancelled
-                    | Error::UploadSizeLimitExceeded(_, _)
-                    | Error::Failure(_)
-                    | Error::BadRequest(_)
-                    | Error::FieldClash(_)
-                    | Error::JsonDecodeError(_, _) => {
-                        debug!("{}", e);
-                        return Result::Err(PhotoLibError::GoogleBackendError);
-                    }
-                },
+                Err(e) => {
+                    error!("{}", e);
+                    return Result::Err(PhotoLibError::from(e));
+                }
                 Ok(res) => {
-                    debug!("Success: listing photod");
+                    debug!("Success: listing photos");
                     for media_item in res.1.media_items.unwrap().into_iter() {
                         self.db.insert_media(
                             media_item.id.unwrap(),
@@ -155,22 +149,10 @@ where
             let result = result_builder.doit();
 
             match result {
-                Err(e) => match e {
-                    // The Error enum provides details about what exactly happened.
-                    // You can also just use its `Debug`, `Display` or `Error` traits
-                    Error::HttpError(_)
-                    | Error::MissingAPIKey
-                    | Error::MissingToken(_)
-                    | Error::Cancelled
-                    | Error::UploadSizeLimitExceeded(_, _)
-                    | Error::Failure(_)
-                    | Error::BadRequest(_)
-                    | Error::FieldClash(_)
-                    | Error::JsonDecodeError(_, _) => {
-                        debug!("{}", e);
-                        return Result::Err(PhotoLibError::GoogleBackendError);
-                    }
-                },
+                Err(e) => {
+                    error!("{}", e);
+                    return Result::Err(PhotoLibError::from(e));
+                }
                 Ok(res) => {
                     debug!("Success: listing albums");
                     for album in res.1.albums.unwrap().into_iter() {

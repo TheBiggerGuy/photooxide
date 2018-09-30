@@ -191,7 +191,10 @@ impl SqliteDb {
 
     fn last_updated_x(&self, table: &str) -> Result<Option<DateTime<Utc>>, DbError> {
         let result: Result<i64, rusqlite::Error> = self.db.query_row(
-            &format!("SELECT IFNULL(MIN(last_modified), 0) AS min_last_modified FROM {};", table),
+            &format!(
+                "SELECT IFNULL(MIN(last_modified), 0) AS min_last_modified FROM {};",
+                table
+            ),
             &[],
             |row| row.get_checked(0),
         )?;
