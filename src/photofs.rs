@@ -308,7 +308,7 @@ where
         let mut fh = ino;
         loop {
             if self.open_dirs.contains_key(&fh) {
-                fh = fh + 1;
+                fh += 1;
             } else {
                 break;
             }
