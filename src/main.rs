@@ -21,6 +21,7 @@ extern crate chrono;
 use std::env;
 use std::ffi::OsStr;
 use std::option::Option;
+use std::rc::Rc;
 
 use oauth2::{
     Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, DiskTokenStorage,
@@ -70,11 +71,11 @@ fn main() {
     let photos_library = PhotosLibrary::new(http_client, auth);
 
     let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
-    let db = SqliteDb::new(sqlite_connection).unwrap();
+    let db = Rc::new(SqliteDb::new(sqlite_connection).unwrap());
 
-    let db_backed_photo_lib = DbBackedPhotoLib::new(photos_library, db).unwrap();
+    let db_backed_photo_lib = DbBackedPhotoLib::new(photos_library, db.clone()).unwrap();
 
-    let fs = PhotoFs::new(db_backed_photo_lib);
+    let fs = PhotoFs::new(db_backed_photo_lib, db.clone()).unwrap();
 
     let mountpoint = env::args_os().nth(1).unwrap();
     let options = ["-o", "ro", "-o", "fsname=photooxide"]

@@ -10,6 +10,7 @@ extern crate time;
 use std::borrow::BorrowMut;
 use std::convert::From;
 use std::option::Option;
+use std::rc::Rc;
 use std::result::Result;
 
 use photoslibrary1::PhotosLibrary;
@@ -51,7 +52,7 @@ where
     D: PhotoDb,
 {
     photos_library: PhotosLibrary<C, A>,
-    db: D,
+    db: Rc<D>,
 }
 
 impl<C, A, D> DbBackedPhotoLib<C, A, D>
@@ -62,7 +63,7 @@ where
 {
     pub fn new(
         photos_library: PhotosLibrary<C, A>,
-        db: D,
+        db: Rc<D>,
     ) -> Result<DbBackedPhotoLib<C, A, D>, PhotoLibError> {
         Result::Ok(DbBackedPhotoLib { photos_library, db })
     }
