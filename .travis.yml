@@ -1,3 +1,4 @@
+sudo: false
 language: rust
 rust:
   - stable
@@ -8,6 +9,12 @@ matrix:
   allow_failures:
     - rust: nightly
   fast_finish: true
+
+# Required headers to build against libfuse
+addons:
+  apt:
+    packages:
+      - libfuse-dev
 
 before_script:
   - rustup component add clippy-preview
