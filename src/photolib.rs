@@ -177,12 +177,12 @@ where
     D: PhotoDb,
 {
     fn media(&self) -> Result<Vec<String>, PhotoLibError> {
-        self.update_media_allowed_staleness(Duration::minutes(30))?;
+        self.update_media_allowed_staleness(Duration::days(1))?;
         self.db.media().map_err(PhotoLibError::from)
     }
 
     fn albums(&self) -> Result<Vec<String>, PhotoLibError> {
-        self.update_albums_allowed_staleness(Duration::minutes(30))?;
+        self.update_albums_allowed_staleness(Duration::hours(1))?;
         self.db.albums().map_err(PhotoLibError::from)
     }
 }
