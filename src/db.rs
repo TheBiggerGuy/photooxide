@@ -18,7 +18,6 @@ use chrono::{TimeZone, Utc};
 #[derive(Debug)]
 pub enum DbError {
     SqlError(rusqlite::Error),
-    CorruptDatabase,
 }
 
 impl From<rusqlite::Error> for DbError {

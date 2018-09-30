@@ -22,7 +22,6 @@ use db::{DbError, PhotoDb};
 #[derive(Debug)]
 pub enum PhotoLibError {
     SqlError(rusqlite::Error),
-    CorruptDatabase,
     GoogleBackendError(photoslibrary1::Error),
 }
 
@@ -30,7 +29,6 @@ impl From<DbError> for PhotoLibError {
     fn from(error: DbError) -> Self {
         match error {
             DbError::SqlError(sql_error) => PhotoLibError::SqlError(sql_error),
-            DbError::CorruptDatabase => PhotoLibError::CorruptDatabase,
         }
     }
 }
@@ -78,12 +76,11 @@ where
             Some(last_updated_media) => (Utc::now() - last_updated_media) > allowed_staleness,
             None => true,
         };
-        let result = if should_update {
+        if should_update {
             self.update_media()
         } else {
             Result::Ok(())
-        };
-        result
+        }
     }
 
     fn update_albums_allowed_staleness(
@@ -95,12 +92,11 @@ where
             Some(last_updated_media) => (Utc::now() - last_updated_media) > allowed_staleness,
             None => true,
         };
-        let result = if should_update {
+        if should_update {
             self.update_albums()
         } else {
             Result::Ok(())
-        };
-        result
+        }
     }
 
     fn update_media(&self) -> Result<(), PhotoLibError> {
@@ -120,7 +116,7 @@ where
                 }
                 Ok(res) => {
                     debug!("Success: listing photos");
-                    for media_item in res.1.media_items.unwrap().into_iter() {
+                    for media_item in res.1.media_items.unwrap() {
                         self.db.insert_media(
                             media_item.id.unwrap(),
                             media_item.filename.unwrap(),
@@ -155,7 +151,7 @@ where
                 }
                 Ok(res) => {
                     debug!("Success: listing albums");
-                    for album in res.1.albums.unwrap().into_iter() {
+                    for album in res.1.albums.unwrap() {
                         self.db.insert_album(
                             album.id.unwrap(),
                             album.title.unwrap(),

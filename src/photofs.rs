@@ -219,7 +219,7 @@ where
             match result {
                 Ok(album_titles) => {
                     debug!("Success: listing albums");
-                    for album_title in album_titles.iter() {
+                    for album_title in album_titles {
                         debug!("album_title: {}", album_title);
                         entries.push((
                             FIXED_INODE_HELLO_WORLD,
@@ -240,7 +240,7 @@ where
             match result {
                 Ok(media_filenames) => {
                     debug!("Success: listing media");
-                    for media_filename in media_filenames.iter() {
+                    for media_filename in media_filenames {
                         debug!("media_filename: {}", media_filename);
                         entries.push((
                             FIXED_INODE_HELLO_WORLD,
