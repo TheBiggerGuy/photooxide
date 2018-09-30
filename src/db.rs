@@ -161,6 +161,7 @@ impl PhotoDb for SqliteDb {
         )?;
         Result::Ok(())
     }
+
     fn insert_album(
         &self,
         id: String,
