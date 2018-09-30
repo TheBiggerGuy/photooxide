@@ -83,28 +83,28 @@ impl InodeDb for SqliteDb {
     }
 
     fn parent(&self, inode: u64) -> Result<Option<u64>, DbError> {
-        let result: Result<i64, rusqlite::Error> = self.db.query_row(
+        let result: Result<Result<i64, rusqlite::Error>, rusqlite::Error> = self.db.query_row(
             "SELECT parent_id FROM inodes WHERE id = ?",
             &[&(inode as i64)],
             |row| row.get_checked(0),
-        )?;
+        );
         match result {
             Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
             Err(error) => Result::Err(DbError::from(error)),
-            Ok(parent_id) => Result::Ok(Option::Some(parent_id as u64)),
+            Ok(parent_id) => Result::Ok(Option::Some(parent_id? as u64)),
         }
     }
 
     fn name(&self, inode: u64) -> Result<Option<String>, DbError> {
-        let result: Result<String, rusqlite::Error> = self.db.query_row(
+        let result: Result<Result<String, rusqlite::Error>, rusqlite::Error> = self.db.query_row(
             "SELECT name FROM inodes WHERE id = ?",
             &[&(inode as i64)],
             |row| row.get_checked(0),
-        )?;
+        );
         match result {
             Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
             Err(error) => Result::Err(DbError::from(error)),
-            Ok(name) => Result::Ok(Option::Some(name)),
+            Ok(name) => Result::Ok(Option::Some(name?)),
         }
     }
 
