@@ -18,10 +18,14 @@ extern crate rusqlite;
 
 extern crate chrono;
 
+extern crate users;
+
+extern crate scheduled_executor;
+
 use std::env;
 use std::ffi::OsStr;
 use std::option::Option;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex, RwLock};
 
 use oauth2::{
     Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, DiskTokenStorage,
@@ -30,11 +34,15 @@ use oauth2::{
 use photoslibrary1::PhotosLibrary;
 use serde_json as json;
 
+use chrono::Utc;
+
+mod domain;
+
 mod db;
-use db::*;
+use db::{PhotoDb, SqliteDb};
 
 mod photolib;
-use photolib::*;
+use photolib::{HttpRemotePhotoLib, RemotePhotoLib};
 
 mod photofs;
 use photofs::*;
@@ -71,11 +79,59 @@ fn main() {
     let photos_library = PhotosLibrary::new(http_client, auth);
 
     let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
-    let db = Rc::new(SqliteDb::new(sqlite_connection).unwrap());
+    let db = Arc::new(SqliteDb::new(RwLock::new(sqlite_connection)).unwrap());
 
-    let db_backed_photo_lib = DbBackedPhotoLib::new(photos_library, db.clone()).unwrap();
+    let remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(photos_library)));
 
-    let fs = PhotoFs::new(db_backed_photo_lib, db.clone()).unwrap();
+    let fs = PhotoFs::new(remote_photo_lib.clone(), db.clone());
+
+    let executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
+    {
+        let remote_photo_lib = remote_photo_lib.clone();
+        let db = db.clone();
+        executor.schedule_fixed_rate(
+            time::Duration::seconds(5).to_std().unwrap(),
+            time::Duration::hours(12).to_std().unwrap(),
+            move |_remote| {
+                warn!("Start background albums refresh");
+                let remote_photo_lib = remote_photo_lib.lock().unwrap();
+                for album in remote_photo_lib.albums().unwrap() {
+                    match db.upsert_album(&album.0, &album.1, &Utc::now()) {
+                        Ok(inode) => {
+                            debug!("upserted album='{:?}' into inode={:?}", album.1, inode)
+                        }
+                        Err(error) => {
+                            error!("Failed to upsert album {:?} due to {:?}", album.1, error)
+                        }
+                    }
+                }
+                warn!("End background albums refresh");
+            },
+        );
+    }
+    {
+        let remote_photo_lib = remote_photo_lib.clone();
+        let db = db.clone();
+        executor.schedule_fixed_rate(
+            time::Duration::hours(1).to_std().unwrap(),
+            time::Duration::days(5).to_std().unwrap(),
+            move |_remote| {
+                warn!("Start background media_items refresh");
+                let remote_photo_lib = remote_photo_lib.lock().unwrap();
+                for media_item in remote_photo_lib.media_items().unwrap() {
+                    match db.upsert_media_item(&media_item.0, &media_item.1, &Utc::now()) {
+                        Ok(inode) => {
+                            debug!("upserted media_item='{:?}' into inode={:?}", media_item.1, inode)
+                        }
+                        Err(error) => {
+                            error!("Failed to upsert media_item {:?} due to {:?}", media_item.1, error)
+                        }
+                    }
+                }
+                warn!("End background media_items refresh");
+            },
+        );
+    }
 
     let mountpoint = env::args_os().nth(1).unwrap();
     let options = ["-o", "ro", "-o", "fsname=photooxide"]

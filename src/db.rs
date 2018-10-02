@@ -7,17 +7,21 @@ extern crate rusqlite;
 extern crate chrono;
 extern crate time;
 
-use std::collections::HashSet;
 use std::convert::From;
 use std::option::Option;
 use std::result::Result;
+use std::sync;
+use std::sync::RwLock;
 
-use chrono::prelude::*;
 use chrono::{TimeZone, Utc};
+
+use domain::{GoogleId, Inode, PhotoDbAlbum, PhotoDbMediaItem, UtcDateTime};
 
 #[derive(Debug)]
 pub enum DbError {
     SqlError(rusqlite::Error),
+    LockingError,
+    NotImpYet,
 }
 
 impl From<rusqlite::Error> for DbError {
@@ -26,176 +30,229 @@ impl From<rusqlite::Error> for DbError {
     }
 }
 
-pub trait PhotoDb: Sized {
-    fn media(&self) -> Result<Vec<String>, DbError>;
-    fn albums(&self) -> Result<Vec<String>, DbError>;
-
-    fn insert_media(
-        &self,
-        id: String,
-        filename: String,
-        last_modified_time: DateTime<Utc>,
-    ) -> Result<(), DbError>;
-    fn insert_album(
-        &self,
-        id: String,
-        title: String,
-        last_modified_time: DateTime<Utc>,
-    ) -> Result<(), DbError>;
-
-    fn last_updated_media(&self) -> Result<Option<DateTime<Utc>>, DbError>;
-    fn last_updated_album(&self) -> Result<Option<DateTime<Utc>>, DbError>;
+impl<T> From<sync::PoisonError<T>> for DbError {
+    fn from(_error: sync::PoisonError<T>) -> Self {
+        DbError::LockingError
+    }
 }
 
-pub trait InodeDb: Sized {
-    fn children(&self, inode: u64) -> Result<HashSet<u64>, DbError>;
-    fn parent(&self, inode: u64) -> Result<Option<u64>, DbError>;
-    fn name(&self, inode: u64) -> Result<Option<String>, DbError>;
-    fn insert(&self, inode: u64, parent_inode: u64, name: String) -> Result<(), DbError>;
+pub trait PhotoDbRo: Sized {
+    // Listings
+    fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError>;
+    fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError>;
+    fn media_items_in_album(&self, inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError>;
+
+    // Single items
+    fn media_item_by_name(&self, name: &str) -> Result<Option<PhotoDbMediaItem>, DbError>;
+    fn media_item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError>;
+    fn album(&self, name: &str) -> Result<Option<PhotoDbAlbum>, DbError>;
+
+    // Check staleness
+    fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError>;
+    fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError>;
 }
 
-fn ensure_schema(db: &rusqlite::Connection) -> Result<(), DbError> {
-    db.execute("CREATE TABLE IF NOT EXISTS albums (id TEXT PRIMARY KEY, title TEXT, last_modified INTEGER);", &[])?;
-    db.execute("CREATE TABLE IF NOT EXISTS media_items (id TEXT PRIMARY KEY, filename TEXT, last_modified INTEGER);", &[])?;
-    db.execute("CREATE TABLE IF NOT EXISTS inodes (id INTEGER PRIMARY KEY, parent_id INTEGER, name TEXT, FOREIGN KEY(parent_id) REFERENCES inodes(id));", &[])?;
+pub trait PhotoDb: PhotoDbRo + Sized {
+    // Insert/Update
+    fn upsert_media_item(
+        &self,
+        id: &GoogleId,
+        filename: &String,
+        last_modified_time: &UtcDateTime,
+    ) -> Result<Inode, DbError>;
+    fn upsert_album(
+        &self,
+        id: &GoogleId,
+        title: &String,
+        last_modified_time: &UtcDateTime,
+    ) -> Result<Inode, DbError>;
+}
+
+const TABLE_ALBUMS_AND_MEDIA_ITEMS: &str = "albums_and_media_item";
+
+fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
+    let db = db.write()?;
+    db.execute(
+        &format!(
+            "CREATE TABLE IF NOT EXISTS {} (
+        google_id         TEXT NOT NULL,
+        type              TEXT NOT NULL,
+        name              TEXT NOT NULL,
+        inode             INTEGER NOT NULL,
+        last_remote_check INTEGER NOT NULL,
+        PRIMARY KEY (google_id));",
+            TABLE_ALBUMS_AND_MEDIA_ITEMS
+        ),
+        &[],
+    )?;
+    // inodes under 100 are for "special" nodes like the "albums" folder
+    // these are not stored in the DB as it would just mirror code.
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS next_inode (inode INTEGER NOT NULL DEFAULT (100));",
+        &[],
+    )?;
     Result::Ok(())
 }
 
 pub struct SqliteDb {
-    db: rusqlite::Connection,
+    db: RwLock<rusqlite::Connection>,
 }
 
-impl InodeDb for SqliteDb {
-    fn children(&self, inode: u64) -> Result<HashSet<u64>, DbError> {
-        let mut statment = self
-            .db
-            .prepare("SELECT id FROM inodes WHERE parent_id = ?;")?;
-        let titles = statment.query_map(&[&(inode as i64)], |row| row.get(0))?;
+unsafe impl Send for SqliteDb {}
+unsafe impl Sync for SqliteDb {}
 
-        let mut uniq_children: HashSet<u64> = HashSet::new();
-        for title_result in titles {
-            let title: i64 = title_result?;
-            debug!("title: {}", title);
-            uniq_children.insert(title as u64);
+fn row_to_album(row: &rusqlite::Row) -> PhotoDbAlbum {
+    let google_id: String = row.get(0);
+    let name: String = row.get(1);
+    let last_remote_check: i64 = row.get(2);
+    let inode: i64 = row.get(3);
+    PhotoDbAlbum {
+        google_id,
+        name,
+        last_remote_check: Utc::timestamp(&Utc, last_remote_check, 0),
+        inode: inode as u64,
+    }
+}
+
+fn row_to_media_item(row: &rusqlite::Row) -> PhotoDbMediaItem {
+    let google_id: String = row.get(0);
+    let name: String = row.get(1);
+    let last_remote_check: i64 = row.get(2);
+    let inode: i64 = row.get(3);
+    PhotoDbMediaItem {
+        google_id,
+        name,
+        last_remote_check: Utc::timestamp(&Utc, last_remote_check, 0),
+        inode: inode as u64,
+    }
+}
+
+impl PhotoDbRo for SqliteDb {
+    fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError> {
+        let db = self.db.read()?;
+        let mut statment = db.prepare(&format!(
+            "SELECT google_id, name, last_remote_check, inode FROM {} WHERE type = 'media_item';",
+            TABLE_ALBUMS_AND_MEDIA_ITEMS
+        ))?;
+        let media_items_results = statment.query_map(&[], row_to_media_item)?;
+
+        let mut media_items: Vec<PhotoDbMediaItem> = Vec::new();
+        for media_item_result in media_items_results {
+            let media_item = media_item_result?;
+            media_items.push(media_item);
         }
-        Result::Ok(uniq_children)
+        Result::Ok(media_items)
     }
 
-    fn parent(&self, inode: u64) -> Result<Option<u64>, DbError> {
-        let result: Result<Result<i64, rusqlite::Error>, rusqlite::Error> = self.db.query_row(
-            "SELECT parent_id FROM inodes WHERE id = ?",
-            &[&(inode as i64)],
-            |row| row.get_checked(0),
+    fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError> {
+        let db = self.db.read()?;
+        let mut statment = db.prepare(&format!(
+            "SELECT google_id, name, last_remote_check, inode FROM {} WHERE type = 'album';",
+            TABLE_ALBUMS_AND_MEDIA_ITEMS
+        ))?;
+        let media_items_results = statment.query_map(&[], row_to_album)?;
+
+        let mut media_items: Vec<PhotoDbAlbum> = Vec::new();
+        for media_item_result in media_items_results {
+            let media_item = media_item_result?;
+            media_items.push(media_item);
+        }
+        Result::Ok(media_items)
+    }
+
+    fn media_items_in_album(&self, _inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError> {
+        Result::Err(DbError::NotImpYet)
+    }
+
+    fn media_item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError> {
+        let db = self.db.read()?;
+        let result: Result<PhotoDbMediaItem, rusqlite::Error> = db.query_row(
+            &format!("SELECT google_id, name, last_remote_check, inode FROM {} WHERE type = 'media_item' AND inode = ?;", TABLE_ALBUMS_AND_MEDIA_ITEMS),
+            &[&(inode as i64)], row_to_media_item,
         );
         match result {
             Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
             Err(error) => Result::Err(DbError::from(error)),
-            Ok(parent_id) => Result::Ok(Option::Some(parent_id? as u64)),
+            Ok(album) => Result::Ok(Option::Some(album)),
         }
     }
 
-    fn name(&self, inode: u64) -> Result<Option<String>, DbError> {
-        let result: Result<Result<String, rusqlite::Error>, rusqlite::Error> = self.db.query_row(
-            "SELECT name FROM inodes WHERE id = ?",
-            &[&(inode as i64)],
-            |row| row.get_checked(0),
+    fn media_item_by_name(&self, name: &str) -> Result<Option<PhotoDbMediaItem>, DbError> {
+        let db = self.db.read()?;
+        let result: Result<PhotoDbMediaItem, rusqlite::Error> = db.query_row(
+            &format!("SELECT google_id, name, last_remote_check, inode FROM {} WHERE type = 'media_item' AND name = ?;", TABLE_ALBUMS_AND_MEDIA_ITEMS),
+            &[&name], row_to_media_item,
         );
         match result {
             Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
             Err(error) => Result::Err(DbError::from(error)),
-            Ok(name) => Result::Ok(Option::Some(name?)),
+            Ok(album) => Result::Ok(Option::Some(album)),
         }
     }
 
-    fn insert(&self, inode: u64, parent_inode: u64, name: String) -> Result<(), DbError> {
-        let result = self.db.execute(
-            "INSERT OR REPLACE INTO inodes (id, parent_id, name) VALUES (?, ?, ?);",
-            &[&(inode as i64), &(parent_inode as i64), &name],
+    fn album(&self, name: &str) -> Result<Option<PhotoDbAlbum>, DbError> {
+        let db = self.db.read()?;
+        let result: Result<PhotoDbAlbum, rusqlite::Error> = db.query_row(
+            &format!("SELECT google_id, name, last_remote_check, inode FROM {} WHERE type = 'album' AND name = ?;", TABLE_ALBUMS_AND_MEDIA_ITEMS),
+            &[&name], row_to_album,
         );
         match result {
+            Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
             Err(error) => Result::Err(DbError::from(error)),
-            Ok(_) => Result::Ok(()),
+            Ok(album) => Result::Ok(Option::Some(album)),
         }
+    }
+
+    fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError> {
+        self.last_updated_x("media_item")
+    }
+
+    fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError> {
+        self.last_updated_x("album")
     }
 }
 
 impl PhotoDb for SqliteDb {
-    fn media(&self) -> Result<Vec<String>, DbError> {
-        let mut statment = self.db.prepare("SELECT filename FROM media_items;")?;
-        let filenames = statment.query_map(&[], |row| row.get(0))?;
-
-        let mut uniq_filenames: HashSet<String> = HashSet::new();
-        for filename_result in filenames {
-            let filename = filename_result?;
-            debug!("filename: {}", filename);
-            uniq_filenames.insert(filename);
-        }
-        let result = uniq_filenames.into_iter().collect();
-        Result::Ok(result)
-    }
-
-    fn albums(&self) -> Result<Vec<String>, DbError> {
-        let mut statment = self.db.prepare("SELECT title FROM albums;")?;
-        let titles = statment.query_map(&[], |row| row.get(0))?;
-
-        let mut uniq_titles: HashSet<String> = HashSet::new();
-        for title_result in titles {
-            let title = title_result?;
-            debug!("title: {}", title);
-            uniq_titles.insert(title);
-        }
-        let result = uniq_titles.into_iter().collect();
-        Result::Ok(result)
-    }
-
-    fn insert_media(
+    fn upsert_media_item(
         &self,
-        id: String,
-        filename: String,
-        last_modified_time: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        self.db.execute(
-            "INSERT OR REPLACE INTO media_items (id, filename, last_modified) VALUES (?, ?, ?);",
-            &[&id, &filename, &last_modified_time.timestamp()],
+        id: &GoogleId,
+        filename: &String,
+        last_modified_time: &UtcDateTime,
+    ) -> Result<Inode, DbError> {
+        self.db.write()?.execute(
+            &format!("INSERT OR REPLACE INTO {} (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TABLE_ALBUMS_AND_MEDIA_ITEMS),
+            &[id, &"media_item", filename, &4, &last_modified_time.timestamp()],
         )?;
-        Result::Ok(())
+        Result::Ok(4)
     }
 
-    fn insert_album(
+    fn upsert_album(
         &self,
-        id: String,
-        title: String,
-        last_modified_time: DateTime<Utc>,
-    ) -> Result<(), DbError> {
-        self.db.execute(
-            "INSERT OR REPLACE INTO albums (id, title, last_modified) VALUES (?, ?, ?);",
-            &[&id, &title, &last_modified_time.timestamp()],
+        id: &GoogleId,
+        title: &String,
+        last_modified_time: &UtcDateTime,
+    ) -> Result<Inode, DbError> {
+        self.db.write()?.execute(
+            &format!("INSERT OR REPLACE INTO {} (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TABLE_ALBUMS_AND_MEDIA_ITEMS),
+            &[id, &"album", title, &4, &last_modified_time.timestamp()],
         )?;
-        Result::Ok(())
-    }
-
-    fn last_updated_media(&self) -> Result<Option<DateTime<Utc>>, DbError> {
-        self.last_updated_x("media_items")
-    }
-
-    fn last_updated_album(&self) -> Result<Option<DateTime<Utc>>, DbError> {
-        self.last_updated_x("albums")
+        Result::Ok(4)
     }
 }
 
 impl SqliteDb {
-    pub fn new(db: rusqlite::Connection) -> Result<SqliteDb, DbError> {
+    pub fn new(db: RwLock<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
         ensure_schema(&db)?;
         Result::Ok(SqliteDb { db })
     }
 
-    fn last_updated_x(&self, table: &str) -> Result<Option<DateTime<Utc>>, DbError> {
-        let result: Result<i64, rusqlite::Error> = self.db.query_row(
+    fn last_updated_x(&self, table: &str) -> Result<Option<UtcDateTime>, DbError> {
+        let result: Result<i64, rusqlite::Error> = self.db.read()?.query_row(
             &format!(
-                "SELECT IFNULL(MIN(last_modified), 0) AS min_last_modified FROM {};",
-                table
+                "SELECT IFNULL(MIN(last_modified), 0) AS min_last_modified FROM {} WHERE type = ?;",
+                TABLE_ALBUMS_AND_MEDIA_ITEMS
             ),
-            &[],
+            &[&table],
             |row| row.get_checked(0),
         )?;
         match result {
@@ -206,6 +263,7 @@ impl SqliteDb {
     }
 }
 
+/*
 #[cfg(test)]
 mod test {
     use super::*;
@@ -215,56 +273,11 @@ mod test {
         let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
         let db = SqliteDb::new(in_mem_db).unwrap();
 
-        db.insert(1, 1, String::from(".")).unwrap();
-        db.insert(2, 1, String::from("..")).unwrap();
-        db.insert(3, 1, String::from("test_file.txt")).unwrap();
+        db.insert(1, 1, String::from("")).unwrap();
+        db.insert(2, 1, String::from("test_file.txt")).unwrap();
 
-        db.insert(4, 1, String::from("dir1")).unwrap();
-        db.insert(5, 4, String::from("file_in_dir_1")).unwrap();
-    }
-
-    #[test]
-    fn sqlitedb_inode_parent() {
-        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
-        let db = SqliteDb::new(in_mem_db).unwrap();
-
-        db.insert(1, 1, String::from(".")).unwrap();
-        db.insert(2, 1, String::from("..")).unwrap();
-        db.insert(3, 1, String::from("test_file.txt")).unwrap();
-
-        db.insert(4, 1, String::from("dir1")).unwrap();
-        db.insert(5, 4, String::from("file_in_dir_1")).unwrap();
-
-        assert_eq!(db.parent(1).unwrap().unwrap(), 1);
-        assert_eq!(db.parent(2).unwrap().unwrap(), 1);
-        assert_eq!(db.parent(3).unwrap().unwrap(), 1);
-
-        assert_eq!(db.parent(4).unwrap().unwrap(), 1);
-        assert_eq!(db.parent(5).unwrap().unwrap(), 4);
-
-        assert!(db.parent(6).unwrap().is_none());
-    }
-
-    #[test]
-    fn sqlitedb_inode_name() {
-        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
-        let db = SqliteDb::new(in_mem_db).unwrap();
-
-        db.insert(1, 1, String::from(".")).unwrap();
-        db.insert(2, 1, String::from("..")).unwrap();
-        db.insert(3, 1, String::from("test_file.txt")).unwrap();
-
-        db.insert(4, 1, String::from("dir1")).unwrap();
-        db.insert(5, 4, String::from("file_in_dir_1")).unwrap();
-
-        assert_eq!(db.name(1).unwrap().unwrap(), String::from("."));
-        assert_eq!(db.name(2).unwrap().unwrap(), String::from(".."));
-        assert_eq!(db.name(3).unwrap().unwrap(), String::from("test_file.txt"));
-
-        assert_eq!(db.name(4).unwrap().unwrap(), String::from("dir1"));
-        assert_eq!(db.name(5).unwrap().unwrap(), String::from("file_in_dir_1"));
-
-        assert!(db.name(6).unwrap().is_none());
+        db.insert(3, 1, String::from("dir1")).unwrap();
+        db.insert(4, 3, String::from("file_in_dir_1")).unwrap();
     }
 
     #[test]
@@ -272,21 +285,66 @@ mod test {
         let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
         let db = SqliteDb::new(in_mem_db).unwrap();
 
-        db.insert(1, 1, String::from(".")).unwrap();
-        db.insert(2, 1, String::from("..")).unwrap();
-        db.insert(3, 1, String::from("test_file.txt")).unwrap();
+        db.insert(1, 1, String::from("")).unwrap();
+        db.insert(2, 1, String::from("test_file.txt")).unwrap();
 
-        db.insert(4, 1, String::from("dir1")).unwrap();
-        db.insert(5, 4, String::from("file_in_dir_1")).unwrap();
+        db.insert(3, 1, String::from("dir1")).unwrap();
+        db.insert(4, 3, String::from("file_in_dir_1")).unwrap();
 
-        assert_eq!(db.children(1).unwrap(), set_of_inodes(&[1, 2, 3, 4]));
-        assert_eq!(db.children(2).unwrap(), set_of_inodes(&[])); // TODO: Is this correct?
-        assert_eq!(db.children(3).unwrap(), set_of_inodes(&[]));
+        assert_eq!(db.children(1).unwrap(), set_of_inodes(&[1, 2, 3]));
+        assert_eq!(db.children(2).unwrap(), set_of_inodes(&[]));
 
-        assert_eq!(db.children(4).unwrap(), set_of_inodes(&[5]));
-        assert_eq!(db.children(5).unwrap(), set_of_inodes(&[]));
+        assert_eq!(db.children(3).unwrap(), set_of_inodes(&[4]));
+        assert_eq!(db.children(4).unwrap(), set_of_inodes(&[]));
+    }
 
-        assert_eq!(db.children(6).unwrap(), set_of_inodes(&[]));
+    #[test]
+    fn sqlitedb_inode_inode() {
+        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        db.insert(1, 1, String::from("")).unwrap();
+        db.insert(2, 1, String::from("test_file.txt")).unwrap();
+
+        db.insert(3, 1, String::from("dir1")).unwrap();
+        db.insert(4, 3, String::from("file_in_dir_1")).unwrap();
+
+        assert_eq!(db.inode(1, String::from("")).unwrap().unwrap(), 1);
+        assert_eq!(
+            db.inode(1, String::from("test_file.txt")).unwrap().unwrap(),
+            2
+        );
+
+        assert_eq!(db.inode(1, String::from("dir1")).unwrap().unwrap(), 3);
+        assert_eq!(
+            db.inode(3, String::from("file_in_dir_1")).unwrap().unwrap(),
+            4
+        );
+
+        assert!(
+            db.inode(1, String::from("not_a_file_in_dir.txt"))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            db.inode(10, String::from("not_a_real_inode"))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sqlitedb_inode_new_inode() {
+        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        assert_eq!(db.new_inode().unwrap(), 1);
+
+        db.insert(1, 1, String::from("")).unwrap();
+        assert_eq!(db.new_inode().unwrap(), 2);
+
+        db.insert(2, 1, String::from("test_file.txt")).unwrap();
+        assert_eq!(db.new_inode().unwrap(), 3);
     }
 
     fn set_of_inodes(inodes: &[u64]) -> HashSet<u64> {
@@ -297,3 +355,4 @@ mod test {
         set
     }
 }
+*/
