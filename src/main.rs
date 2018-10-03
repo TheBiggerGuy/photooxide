@@ -39,7 +39,7 @@ use chrono::Utc;
 mod domain;
 
 mod db;
-use db::{PhotoDb, SqliteDb};
+use db::{PhotoDb, PhotoDbRo, SqliteDb};
 
 mod photolib;
 use photolib::{HttpRemotePhotoLib, RemotePhotoLib};
@@ -72,16 +72,22 @@ fn main() {
         Option::Some(FlowType::InstalledInteractive),
     );
 
-    let http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+    let api_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+        hyper_rustls::TlsClient::new(),
+    ));
+    let data_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
         hyper_rustls::TlsClient::new(),
     ));
 
-    let photos_library = PhotosLibrary::new(http_client, auth);
+    let photos_library = PhotosLibrary::new(api_http_client, auth);
 
     let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
     let db = Arc::new(SqliteDb::new(RwLock::new(sqlite_connection)).unwrap());
 
-    let remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(photos_library)));
+    let remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(
+        photos_library,
+        data_http_client,
+    )));
 
     let fs = PhotoFs::new(remote_photo_lib.clone(), db.clone());
 
@@ -89,8 +95,15 @@ fn main() {
     {
         let remote_photo_lib = remote_photo_lib.clone();
         let db = db.clone();
+
+        let album_update_delay = match db.last_updated_album().unwrap() {
+            Some(_) => time::Duration::seconds(60),
+            None => time::Duration::seconds(5),
+        };
+        info!("album_update_delay: {}", album_update_delay);
+
         executor.schedule_fixed_rate(
-            time::Duration::seconds(5).to_std().unwrap(),
+            album_update_delay.to_std().unwrap(),
             time::Duration::hours(12).to_std().unwrap(),
             move |_remote| {
                 warn!("Start background albums refresh");
@@ -112,20 +125,29 @@ fn main() {
     {
         let remote_photo_lib = remote_photo_lib.clone();
         let db = db.clone();
+
+        let media_update_delay = match db.last_updated_media().unwrap() {
+            Some(_) => time::Duration::minutes(5),
+            None => time::Duration::seconds(10),
+        };
+        info!("media_update_delay: {}", media_update_delay);
+
         executor.schedule_fixed_rate(
-            time::Duration::hours(1).to_std().unwrap(),
+            media_update_delay.to_std().unwrap(),
             time::Duration::days(5).to_std().unwrap(),
             move |_remote| {
                 warn!("Start background media_items refresh");
                 let remote_photo_lib = remote_photo_lib.lock().unwrap();
                 for media_item in remote_photo_lib.media_items().unwrap() {
                     match db.upsert_media_item(&media_item.0, &media_item.1, &Utc::now()) {
-                        Ok(inode) => {
-                            debug!("upserted media_item='{:?}' into inode={:?}", media_item.1, inode)
-                        }
-                        Err(error) => {
-                            error!("Failed to upsert media_item {:?} due to {:?}", media_item.1, error)
-                        }
+                        Ok(inode) => debug!(
+                            "upserted media_item='{:?}' into inode={:?}",
+                            media_item.1, inode
+                        ),
+                        Err(error) => error!(
+                            "Failed to upsert media_item {:?} due to {:?}",
+                            media_item.1, error
+                        ),
                     }
                 }
                 warn!("End background media_items refresh");
@@ -134,7 +156,7 @@ fn main() {
     }
 
     let mountpoint = env::args_os().nth(1).unwrap();
-    let options = ["-o", "ro", "-o", "fsname=photooxide"]
+    let options = ["-o", "ro", "-o", "fsname=photooxide"] // "-o", "default_permissions",
         .iter()
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();

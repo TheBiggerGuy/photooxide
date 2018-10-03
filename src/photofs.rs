@@ -7,12 +7,12 @@ extern crate rusqlite;
 extern crate users;
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
-use std::collections::HashSet;
 
 use db::{DbError, PhotoDb};
-use domain::Inode;
+use domain::{Inode, MediaTypes};
 use photolib::*;
 
 use fuse::{
@@ -81,6 +81,7 @@ where
 {
     photo_lib: Arc<Mutex<X>>,
     photo_db: Arc<Y>,
+    open_files: HashMap<u64, Vec<u8>>,
     open_dirs: HashMap<u64, Vec<(u64, fuse::FileType, String)>>,
 }
 
@@ -93,6 +94,7 @@ where
         PhotoFs {
             photo_lib,
             photo_db,
+            open_files: HashMap::new(),
             open_dirs: HashMap::new(),
         }
     }
@@ -110,24 +112,16 @@ where
             ),
             "albums" => reply.entry(
                 &TTL,
-                &make_atr(
-                    FIXED_INODE_ALBUMS,
-                    0,
-                    FileType::Directory,
-                ),
+                &make_atr(FIXED_INODE_ALBUMS, 0, FileType::Directory),
                 GENERATION,
             ),
             "media" => reply.entry(
                 &TTL,
-                &make_atr(
-                    FIXED_INODE_MEDIA,
-                    0,
-                    FileType::Directory,
-                ),
+                &make_atr(FIXED_INODE_MEDIA, 0, FileType::Directory),
                 GENERATION,
             ),
             _ => {
-                error!(
+                warn!(
                     "lookup: Failed to find a FileAttr for name={:?} in root",
                     name
                 );
@@ -139,18 +133,26 @@ where
 
     fn lookup_albums(&mut self, _req: &Request, name: &OsStr, reply: ReplyEntry) {
         let name = name.to_str().unwrap();
-        match self.photo_db.album(&String::from(name)) {
-            Ok(_album) => reply.entry(
+        match self.photo_db.album_by_name(&String::from(name)) {
+            Ok(Option::Some(album)) => reply.entry(
                 &TTL,
                 &make_atr(
-                    FIXED_INODE_HELLO_WORLD,
-                    HELLO_TXT_CONTENT.len(),
-                    FileType::RegularFile,
+                    album.inode,
+                    0,
+                    FileType::Directory,
                 ),
                 GENERATION,
             ),
+            Ok(Option::None) => {
+                warn!(
+                    "lookup: Failed to find a FileAttr for name={:?} in albums",
+                    name
+                );
+                reply.error(ENOENT);
+                return;
+            }
             Err(error) => {
-                error!(
+                warn!(
                     "lookup: Failed to find a FileAttr for name={:?} in albums: {:?}",
                     name, error
                 );
@@ -163,18 +165,26 @@ where
     fn lookup_media(&mut self, _req: &Request, name: &OsStr, reply: ReplyEntry) {
         let name = name.to_str().unwrap();
         match self.photo_db.media_item_by_name(&String::from(name)) {
-            Ok(_media_item) => reply.entry(
+            Ok(Option::Some(media_item)) => reply.entry(
                 &TTL,
                 &make_atr(
-                    FIXED_INODE_HELLO_WORLD,
-                    HELLO_TXT_CONTENT.len(),
+                    media_item.inode,
+                    0,
                     FileType::RegularFile,
                 ),
                 GENERATION,
             ),
+            Ok(Option::None) => {
+                warn!(
+                    "lookup: Failed to find a FileAttr for name={:?} in media",
+                    name
+                );
+                reply.error(ENOENT);
+                return;
+            }
             Err(error) => {
                 error!(
-                    "lookup: Failed to find a FileAttr for name={:?} in albums: {:?}",
+                    "lookup: Failed to find a FileAttr for name={:?} in media WITH ERROR: {:?}",
                     name, error
                 );
                 reply.error(ENOENT);
@@ -195,7 +205,7 @@ where
             FIXED_INODE_ALBUMS => self.lookup_albums(req, name, reply),
             FIXED_INODE_MEDIA => self.lookup_media(req, name, reply),
             _ => {
-                error!(
+                warn!(
                     "lookup: Failed to find a FileAttr for inode={} (name={:?})",
                     parent, name
                 );
@@ -225,46 +235,133 @@ where
                     FileType::RegularFile,
                 ),
             ),
-            _ => reply.error(ENOENT),
+            _ => {
+                match self.photo_db.item_by_inode(ino) {
+                    Err(error) => {
+                        error!(
+                            "FS getattr: Failed to lookup item in local db: {:?}",
+                            error
+                        );
+                        reply.error(ENOENT);
+                        return;
+                    }
+                    Ok(Option::None) => {
+                        warn!("FS getattr: No item found in local DB: {:?}", ino);
+                        reply.error(ENOENT);
+                        return;
+                    }
+                    Ok(Option::Some(item)) => {
+                        let file_type = match item.media_type {
+                            MediaTypes::Album => FileType::Directory,
+                            MediaTypes::MediaItem => FileType::RegularFile,
+                        };
+                        reply.attr(
+                            &TTL,
+                            &make_atr(
+                                item.inode,
+                                0,
+                                file_type,
+                        ));
+                    },
+                };
+            }
+        };
+    }
+
+    fn open(&mut self, _req: &Request, ino: u64, _flags: u32, reply: ReplyOpen) {
+        debug!("FS open: ino={}", ino);
+
+        let file_data: Vec<u8>;
+        if ino == FIXED_INODE_HELLO_WORLD {
+            file_data = String::from(HELLO_TXT_CONTENT).into_bytes();
+        } else {
+            match self.photo_db.media_item_by_inode(ino) {
+                Err(error) => {
+                    error!(
+                        "FS open: Failed to lookup media item in local db: {:?}",
+                        error
+                    );
+                    reply.error(ENOENT);
+                    return;
+                }
+                Ok(Option::None) => {
+                    warn!("FS open: No media items found in local DB: {:?}", ino);
+                    reply.error(ENOENT);
+                    return;
+                }
+                Ok(Option::Some(media_item)) => {
+                    let photo_lib = self.photo_lib.lock().unwrap();
+                    match photo_lib.media_item(media_item.google_id) {
+                        Err(error) => {
+                            error!(
+                                "FS open: Failed to fetch media item from remote: {:?}",
+                                error
+                            );
+                            reply.error(ENOENT);
+                            return;
+                        }
+                        Ok(data) => {
+                            file_data = data;
+                        }
+                    }
+                }
+            }
         }
+
+        let mut fh = ino;
+        loop {
+            if self.open_files.contains_key(&fh) {
+                fh += 1;
+            } else {
+                break;
+            }
+        }
+
+        self.open_files.insert(fh, file_data);
+        reply.opened(fh, fuse::consts::FOPEN_DIRECT_IO);
     }
 
     fn read(
         &mut self,
         _req: &Request,
         ino: u64,
-        _fh: u64,
+        fh: u64,
         offset: i64,
-        _size: u32,
+        size: u32,
         reply: ReplyData,
     ) {
-        debug!("FS read: ino={}, offset={}", ino, offset);
-        if ino == FIXED_INODE_HELLO_WORLD {
-            reply.data(&HELLO_TXT_CONTENT.as_bytes()[offset as usize..]);
-            return
-        }
+        debug!("FS read: ino={}, offset={} size={}", ino, offset, size);
 
-        match self.photo_db.media_item_by_inode(ino) {
-            Err(error) => {
-                error!("FS read: Failed to lookup media item in local db: {:?}", error);
+        match self.open_files.get(&fh) {
+            None => {
                 reply.error(ENOENT);
-            },
-            Ok(Option::None) => {
-                warn!("FS read: No media items found in local DB: {:?}", ino);
+                return;
+            }
+            Some(data) => {
+                let slice_end: usize = usize::min((offset as usize) + (size as usize), data.len());
+                reply.data(&data[offset as usize..slice_end]);
+            }
+        }
+    }
+
+    fn release(
+        &mut self,
+        _req: &Request,
+        ino: u64,
+        fh: u64,
+        _flags: u32,
+        _lock_owner: u64,
+        _flush: bool,
+        reply: ReplyEmpty,
+    ) {
+        debug!("FS release: ino={}, fh={}", ino, fh);
+
+        match self.open_files.remove(&fh) {
+            None => {
                 reply.error(ENOENT);
-            },
-            Ok(Option::Some(media_item)) => {
-                let photo_lib = self.photo_lib.lock().unwrap();
-                match photo_lib.media_item(media_item.google_id) {
-                    Err(error) => {
-                        error!("FS read: Failed to fetch media item from remote: {:?}", error);
-                        reply.error(ENOENT);
-                    },
-                    Ok(data) => {
-                        reply.data(&data[offset as usize..]);  
-                    },
-                }
-            },
+                return;
+            }
+            Some(_) => reply.ok(),
         }
     }
 
@@ -353,7 +450,7 @@ where
             return;
         };
 
-       let mut fh = ino;
+        let mut fh = ino;
         loop {
             if self.open_dirs.contains_key(&fh) {
                 fh += 1;
@@ -394,15 +491,22 @@ where
             let name = entry.2.clone();
             let is_full = reply.add(ino, offset as i64, kind, name);
             if is_full {
-                info!("is_full: to_skip={} offset={}", to_skip, offset);
+                info!("FS readdir: is_full: to_skip={} offset={}", to_skip, offset);
                 break;
             }
         }
         reply.ok();
     }
 
-    fn releasedir(&mut self, _req: &Request, _ino: u64, fh: u64, _flags: u32, reply: ReplyEmpty) {
-        self.open_dirs.remove(&fh);
-        reply.ok();
+    fn releasedir(&mut self, _req: &Request, ino: u64, fh: u64, _flags: u32, reply: ReplyEmpty) {
+        debug!("FS releasedir: ino={}, fh={}", ino, fh);
+
+        match self.open_dirs.remove(&fh) {
+            None => {
+                reply.error(ENOENT);
+                return;
+            }
+            Some(_) => reply.ok(),
+        }
     }
 }

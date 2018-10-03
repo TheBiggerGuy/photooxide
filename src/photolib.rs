@@ -7,8 +7,10 @@ extern crate rusqlite;
 extern crate chrono;
 extern crate time;
 
+use std;
 use std::borrow::BorrowMut;
 use std::convert::From;
+use std::io::Read;
 use std::option::Option;
 use std::result::Result;
 
@@ -19,7 +21,21 @@ use domain::*;
 #[derive(Debug)]
 pub enum RemotePhotoLibError {
     GoogleBackendError(photoslibrary1::Error),
-    NotImpYet,
+    HttpClientError(hyper::error::Error),
+    HttpApiError(hyper::status::StatusCode),
+    IoError(std::io::Error),
+}
+
+impl From<std::io::Error> for RemotePhotoLibError {
+    fn from(error: std::io::Error) -> RemotePhotoLibError {
+        RemotePhotoLibError::IoError(error)
+    }
+}
+
+impl From<hyper::error::Error> for RemotePhotoLibError {
+    fn from(error: hyper::error::Error) -> RemotePhotoLibError {
+        RemotePhotoLibError::HttpClientError(error)
+    }
 }
 
 impl From<photoslibrary1::Error> for RemotePhotoLibError {
@@ -31,7 +47,7 @@ impl From<photoslibrary1::Error> for RemotePhotoLibError {
 pub trait RemotePhotoLib: Sized {
     fn media_items(&self) -> Result<Vec<(GoogleId, String)>, RemotePhotoLibError>;
     fn albums(&self) -> Result<Vec<(GoogleId, String)>, RemotePhotoLibError>;
-    fn media_item(&self, google_id: GoogleId) -> Result<&[u8], RemotePhotoLibError>;
+    fn media_item(&self, google_id: GoogleId) -> Result<Vec<u8>, RemotePhotoLibError>;
 }
 
 pub struct HttpRemotePhotoLib<C, A>
@@ -40,6 +56,7 @@ where
     A: oauth2::GetToken,
 {
     photos_library: PhotosLibrary<C, A>,
+    data_http_client: hyper::Client,
 }
 
 impl<C, A> HttpRemotePhotoLib<C, A>
@@ -47,8 +64,14 @@ where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
 {
-    pub fn new(photos_library: PhotosLibrary<C, A>) -> HttpRemotePhotoLib<C, A> {
-        HttpRemotePhotoLib { photos_library }
+    pub fn new(
+        photos_library: PhotosLibrary<C, A>,
+        data_http_client: hyper::Client,
+    ) -> HttpRemotePhotoLib<C, A> {
+        HttpRemotePhotoLib {
+            photos_library,
+            data_http_client,
+        }
     }
 }
 
@@ -119,11 +142,22 @@ where
         Result::Ok(all_albums)
     }
 
-    fn media_item(&self, google_id: GoogleId) -> Result<&[u8], RemotePhotoLibError> {
+    fn media_item(&self, google_id: GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
         let media_item = self.photos_library.media_items().get(&google_id).doit()?;
         let base_url = media_item.1.base_url.unwrap();
         let download_url = format!("{}=d", base_url);
-        info!("Have base_url={:?} but still nedd HTTP client ( {} )", base_url, download_url); // TODO
-        Result::Err(RemotePhotoLibError::NotImpYet)
+        info!("Have base_url={} download_url={} )", base_url, download_url);
+
+        let mut http_response = self.data_http_client.get(&download_url).send()?;
+        match http_response.status {
+            hyper::status::StatusCode::Ok => {
+                let mut buffer: Vec<u8> = Vec::new();
+                info!("Downloading {:?}", media_item.1.filename);
+                let size = http_response.read_to_end(&mut buffer)?;
+                info!("Downloaded {:?}, size={}", media_item.1.filename, size);
+                Result::Ok(buffer)
+            }
+            error => Result::Err(RemotePhotoLibError::HttpApiError(error)),
+        }
     }
 }
