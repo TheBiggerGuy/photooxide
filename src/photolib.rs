@@ -14,7 +14,7 @@ use std::io::Read;
 use std::option::Option;
 use std::result::Result;
 
-use photoslibrary1::PhotosLibrary;
+use photoslibrary1::{PhotosLibrary, SearchMediaItemsRequest};
 
 use domain::*;
 
@@ -62,8 +62,10 @@ impl ItemListing {
 
 pub trait RemotePhotoLib: Sized {
     fn media_items(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
-    fn albums(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
     fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError>;
+
+    fn albums(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
+    fn album(&self, google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
 }
 
 pub struct HttpRemotePhotoLib<C, A>
@@ -148,8 +150,8 @@ where
                 Ok(res) => {
                     debug!("Success: listing albums");
                     for album in res.1.albums.unwrap() {
-                        let google_id = album.id.unwrap();
-                        let album_listing = ItemListing::new(google_id, album.title.unwrap());
+                        let album_listing =
+                            ItemListing::new(album.id.unwrap(), album.title.unwrap());
                         all_albums.push(album_listing);
                     }
 
@@ -180,5 +182,41 @@ where
             }
             error => Result::Err(RemotePhotoLibError::HttpApiError(error)),
         }
+    }
+
+    fn album(&self, google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
+        let mut all_media_items_in_album: Vec<ItemListing> = Vec::new();
+        let mut page_token: Option<String> = Option::None;
+        loop {
+            let request = SearchMediaItemsRequest {
+                page_token,
+                page_size: Option::Some(50),
+                filters: Option::None,
+                album_id: Option::Some(String::from(google_id)),
+            };
+            let remote_result = self.photos_library.media_items().search(request).doit();
+
+            match remote_result {
+                Err(e) => {
+                    error!("{}", e);
+                    return Result::Err(RemotePhotoLibError::from(e));
+                }
+                Ok(res) => {
+                    debug!("Success: listing media_items in album");
+                    for media_item in res.1.media_items.unwrap() {
+                        all_media_items_in_album.push(ItemListing::new(
+                            media_item.id.unwrap(),
+                            media_item.filename.unwrap(),
+                        ));
+                    }
+
+                    page_token = res.1.next_page_token;
+                    if page_token.is_none() {
+                        break;
+                    }
+                }
+            };
+        }
+        Result::Ok(all_media_items_in_album)
     }
 }

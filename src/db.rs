@@ -24,7 +24,6 @@ use domain::{
 pub enum DbError {
     SqlError(rusqlite::Error),
     LockingError,
-    NotImpYet,
 }
 
 impl From<rusqlite::Error> for DbError {
@@ -42,6 +41,7 @@ impl<T> From<sync::PoisonError<T>> for DbError {
 enum TableName {
     AlbumsAndMediaItems,
     NextInode,
+    MediaItemsInAlbum,
 }
 
 impl fmt::Display for TableName {
@@ -49,6 +49,7 @@ impl fmt::Display for TableName {
         match self {
             TableName::AlbumsAndMediaItems => write!(f, "albums_and_media_item"),
             TableName::NextInode => write!(f, "next_inode"),
+            TableName::MediaItemsInAlbum => write!(f, "media_items_in_album"),
         }
     }
 }
@@ -89,19 +90,27 @@ pub trait PhotoDb: PhotoDbRo + Sized {
         title: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError>;
+    fn upsert_media_item_in_album(
+        &self,
+        album_id: &GoogleId,
+        media_item_id: &GoogleId,
+    ) -> Result<(), DbError>;
 }
 
 fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
     let db = db.write()?;
+
+    // AlbumsAndMediaItems
     db.execute(
         &format!(
             "CREATE TABLE IF NOT EXISTS '{}' (
-        google_id         TEXT NOT NULL,
-        type              TEXT NOT NULL,
-        name              TEXT NOT NULL,
-        inode             INTEGER NOT NULL,
-        last_remote_check INTEGER NOT NULL,
-        PRIMARY KEY (google_id));",
+                google_id         TEXT NOT NULL,
+                type              TEXT NOT NULL,
+                name              TEXT NOT NULL,
+                inode             INTEGER NOT NULL,
+                last_remote_check INTEGER NOT NULL,
+                PRIMARY KEY (google_id)
+            );",
             TableName::AlbumsAndMediaItems
         ),
         &[],
@@ -122,6 +131,8 @@ fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
         ),
         &[],
     )?;
+
+    // NextInode
     // inodes under 100 are for "special" nodes like the "albums" folder
     // these are not stored in the DB as it would just mirror code.
     db.execute(
@@ -135,6 +146,31 @@ fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
         &format!(
             "INSERT OR IGNORE INTO '{}' (inode) VALUES (100);",
             TableName::NextInode
+        ),
+        &[],
+    )?;
+
+    // MediaItemsInAlbum
+    db.execute(
+        &format!(
+            "CREATE TABLE IF NOT EXISTS '{}' (
+                album_google_id      TEXT NOT NULL,
+                media_item_google_id TEXT NOT NULL,
+                PRIMARY KEY(album_google_id, media_item_google_id),
+                FOREIGN KEY (album_google_id) REFERENCES '{}' (google_id) ON DELETE CASCADE,
+                FOREIGN KEY (media_item_google_id) REFERENCES '{}' (google_id) ON DELETE CASCADE
+            );",
+            TableName::MediaItemsInAlbum,
+            TableName::AlbumsAndMediaItems,
+            TableName::AlbumsAndMediaItems
+        ),
+        &[],
+    )?;
+    db.execute(
+        &format!(
+            "CREATE INDEX IF NOT EXISTS '{}_by_album_google_id' ON '{}' (album_google_id);",
+            TableName::MediaItemsInAlbum,
+            TableName::MediaItemsInAlbum
         ),
         &[],
     )?;
@@ -217,8 +253,27 @@ impl PhotoDbRo for SqliteDb {
         Result::Ok(media_items)
     }
 
-    fn media_items_in_album(&self, _inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError> {
-        Result::Err(DbError::NotImpYet)
+    fn media_items_in_album(&self, inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError> {
+        let db = self.db.read()?;
+        let mut statment = db.prepare(&format!(
+            "SELECT google_id, type, name, last_remote_check, inode
+            FROM '{}' INNER JOIN '{}' ON '{}'.google_id = '{}'.media_item_google_id
+            WHERE type = '{}' AND album_google_id = (SELECT google_id FROM {} WHERE inode = ?);",
+            TableName::AlbumsAndMediaItems,
+            TableName::MediaItemsInAlbum,
+            TableName::AlbumsAndMediaItems,
+            TableName::MediaItemsInAlbum,
+            MediaTypes::MediaItem,
+            TableName::AlbumsAndMediaItems,
+        ))?;
+        let media_items_results = statment.query_map(&[&(inode as i64)], row_to_media_item)?;
+
+        let mut media_items: Vec<PhotoDbMediaItem> = Vec::new();
+        for media_item_result in media_items_results {
+            let media_item = media_item_result?;
+            media_items.push(media_item);
+        }
+        Result::Ok(media_items)
     }
 
     fn media_item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError> {
@@ -320,6 +375,18 @@ impl PhotoDb for SqliteDb {
     ) -> Result<Inode, DbError> {
         let inode = self.get_and_update_inode()?;
         self.upsert_x(id, &MediaTypes::Album, title, inode, &last_modified_time)
+    }
+
+    fn upsert_media_item_in_album(
+        &self,
+        album_id: &GoogleId,
+        media_item_id: &GoogleId,
+    ) -> Result<(), DbError> {
+        self.db.write()?.execute(
+            &format!("INSERT OR REPLACE INTO '{}' (album_google_id, media_item_google_id) VALUES (?, ?);", TableName::MediaItemsInAlbum),
+            &[&album_id, &media_item_id],
+        )?;
+        Result::Ok(())
     }
 }
 
@@ -512,6 +579,34 @@ mod test {
             104
         );
         assert_eq!(db.get_and_update_inode().unwrap(), 105);
+    }
+
+    #[test]
+    fn sqlitedb_upsert_media_item_in_album() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now_unix = Utc::now().timestamp();
+        let now = Utc::timestamp(&Utc, now_unix, 0);
+
+        // Test Empty DB
+        assert_eq!(db.media_items_in_album(101).unwrap().len(), 0);
+
+        // Test empty album item
+        let album_inode = db
+            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
+            .unwrap();
+        assert_eq!(db.media_items_in_album(album_inode).unwrap().len(), 0);
+
+        // Test single photo in Album
+        db.upsert_media_item(&"GoogleIdMediaItem1", &"Media Item 1", &now)
+            .unwrap();
+        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem1")
+            .unwrap();
+
+        let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
+        assert_eq!(media_items_in_album.len(), 1);
+        assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
     }
 
     /*

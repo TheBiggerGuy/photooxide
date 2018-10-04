@@ -12,7 +12,7 @@ use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
 
 use db::{DbError, PhotoDb};
-use domain::{Inode, MediaTypes};
+use domain::{Inode, MediaTypes, PhotoDbAlbum};
 use photolib::*;
 
 use fuse::{
@@ -61,7 +61,6 @@ fn make_atr(inode: Inode, size: usize, file_type: FileType) -> FileAttr {
 pub enum PhotoFsError {
     SqlError(rusqlite::Error),
     LockingError,
-    NotImpYet,
 }
 
 impl From<DbError> for PhotoFsError {
@@ -69,7 +68,6 @@ impl From<DbError> for PhotoFsError {
         match error {
             DbError::SqlError(sql_error) => PhotoFsError::SqlError(sql_error),
             DbError::LockingError => PhotoFsError::LockingError,
-            DbError::NotImpYet => PhotoFsError::NotImpYet,
         }
     }
 }
@@ -158,6 +156,11 @@ where
         }
     }
 
+    // TODO: Check photo by name is actually in that album
+    fn lookup_media_items_in_album(&mut self, _req: &Request, name: &OsStr, reply: ReplyEntry) {
+        self.lookup_media(_req, name, reply)
+    }
+
     fn lookup_media(&mut self, _req: &Request, name: &OsStr, reply: ReplyEntry) {
         let name = name.to_str().unwrap();
         match self.photo_db.media_item_by_name(&String::from(name)) {
@@ -196,14 +199,25 @@ where
             FIXED_INODE_ROOT => self.lookup_root(req, name, reply),
             FIXED_INODE_ALBUMS => self.lookup_albums(req, name, reply),
             FIXED_INODE_MEDIA => self.lookup_media(req, name, reply),
-            _ => {
-                warn!(
-                    "lookup: Failed to find a FileAttr for inode={} (name={:?})",
-                    parent, name
-                );
-                reply.error(ENOENT);
-                return;
-            }
+            _ => match self.photo_db.album_by_inode(parent) {
+                Ok(Option::Some(_)) => self.lookup_media_items_in_album(req, name, reply),
+                Ok(Option::None) => {
+                    warn!(
+                        "FS lookup: Failed to find a FileAttr for inode={} (name={:?})",
+                        parent, name
+                    );
+                    reply.error(ENOENT);
+                    return;
+                }
+                Err(error) => {
+                    error!(
+                        "FS lookup: Failed to lookup a FileAttr for inode={} (name={:?}) with {:?}",
+                        parent, name, error
+                    );
+                    reply.error(ENOENT);
+                    return;
+                }
+            },
         }
     }
 
@@ -349,17 +363,39 @@ where
     }
 
     fn opendir(&mut self, _req: &Request, ino: u64, _flags: u32, reply: ReplyOpen) {
-        if ino != FIXED_INODE_ROOT && ino != FIXED_INODE_MEDIA && ino != FIXED_INODE_ALBUMS {
-            error!("FS readdir is for ?? error (ino={})", ino);
-            reply.error(ENOENT);
-            return;
-        }
+        let album_for_inode: Option<PhotoDbAlbum> =
+            if ino == FIXED_INODE_ROOT || ino == FIXED_INODE_MEDIA || ino == FIXED_INODE_ALBUMS {
+                Option::None
+            } else {
+                match self.photo_db.album_by_inode(ino) {
+                    Err(error) => {
+                        error!(
+                            "FS opendir: Error checking inode is a album (ino={}): {:?}",
+                            ino, error
+                        );
+                        reply.error(ENOENT);
+                        return;
+                    }
+                    Ok(Option::None) => {
+                        warn!("FS opendir: Failed to find album for inode (ino={})", ino);
+                        reply.error(ENOENT);
+                        return;
+                    }
+                    Ok(Option::Some(album)) => {
+                        debug!(
+                            "FS opendir: open request for album that is found in DB: {:?}",
+                            album
+                        );
+                        Option::Some(album)
+                    }
+                }
+            };
 
         let mut entries: Vec<(u64, fuse::FileType, String)> = Vec::new();
         entries.push((ino, FileType::Directory, String::from(".")));
 
         if ino == FIXED_INODE_ROOT {
-            debug!("FS readdir is for root");
+            debug!("FS opendir: is for root");
             entries.push((
                 FIXED_INODE_ALBUMS,
                 FileType::Directory,
@@ -376,51 +412,56 @@ where
                 String::from("hello.txt"),
             ));
         } else if ino == FIXED_INODE_ALBUMS {
-            debug!("FS readdir is for albums");
+            debug!("FS opendir: is for albums");
             entries.push((FIXED_INODE_ROOT, FileType::Directory, String::from("..")));
             let albums = self.photo_db.albums();
             let mut albums_dedupe = HashSet::new();
             match albums {
                 Ok(albums) => {
-                    debug!("Success: listing albums");
+                    debug!("FS opendir: Success: listing albums");
                     for album in albums {
-                        debug!("album: {:?}", album);
-                        if albums_dedupe.contains(&album.name) {
-                            continue;
+                        debug!("FS opendir: \talbum: {:?}", album);
+                        if albums_dedupe.insert(album.name.clone()) {
+                            let entry = (album.inode, FileType::Directory, album.name.clone());
+                            entries.push(entry);
+                        } else {
+                            warn!("FS opendir: skipping {} as duplicate name", album.name);
                         }
-                        albums_dedupe.insert(album.name.clone());
-                        let entry = (
-                            FIXED_INODE_HELLO_WORLD,
-                            FileType::RegularFile,
-                            album.name.clone(),
-                        );
-                        entries.push(entry);
                     }
                 }
                 Err(error) => {
                     warn!("Failed backend listing albums: {:?}", error);
                 }
             }
-        } else if ino == FIXED_INODE_MEDIA {
-            debug!("FS readdir is for media");
-            entries.push((FIXED_INODE_ROOT, FileType::Directory, String::from("..")));
-            let media_items = self.photo_db.media_items();
+        } else if ino == FIXED_INODE_MEDIA || album_for_inode.is_some() {
+            let media_items = if ino == FIXED_INODE_MEDIA {
+                debug!("FS opendir: is for media");
+                entries.push((FIXED_INODE_ROOT, FileType::Directory, String::from("..")));
+                self.photo_db.media_items()
+            } else {
+                debug!("FS opendir: is for media in album");
+                entries.push((FIXED_INODE_MEDIA, FileType::Directory, String::from("..")));
+                self.photo_db.media_items_in_album(ino)
+            };
             let mut media_items_dedupe = HashSet::new();
             match media_items {
                 Ok(media_items) => {
-                    debug!("Success: listing media");
+                    debug!(
+                        "FS opendir: Success listing media len={}",
+                        media_items.len()
+                    );
                     for media_item in media_items {
                         debug!("media_item: {:?}", media_item);
-                        if media_items_dedupe.contains(&media_item.name) {
-                            continue;
+                        if media_items_dedupe.insert(media_item.name.clone()) {
+                            let entry = (
+                                media_item.inode,
+                                FileType::RegularFile,
+                                media_item.name.clone(),
+                            );
+                            entries.push(entry);
+                        } else {
+                            warn!("FS opendir: skipping {} as duplicate name", media_item.name);
                         }
-                        media_items_dedupe.insert(media_item.name.clone());
-                        let entry = (
-                            FIXED_INODE_HELLO_WORLD,
-                            FileType::RegularFile,
-                            media_item.name.clone(),
-                        );
-                        entries.push(entry);
                     }
                 }
                 Err(error) => {
@@ -428,9 +469,7 @@ where
                 }
             }
         } else {
-            debug!("FS readdir is for ?? error");
-            reply.error(ENOENT);
-            return;
+            panic!("Code should never reach this location");
         };
 
         let mut fh = ino;
@@ -468,11 +507,15 @@ where
 
         let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
         for (offset, entry) in entries.into_iter().enumerate().skip(to_skip) {
-            debug!("Adding to response");
             let ino = entry.0;
             let kind = entry.1;
-            let name = entry.2.clone();
-            let is_full = reply.add(ino, offset as i64, kind, name);
+            let name = entry.2.as_str();
+            let is_full = reply.add(ino, (offset + 1) as i64, kind, name);
+            debug!("FS readdir: Adding to response: {}", name);
+            if name.contains('/') {
+                error!("FS readdir: Skipping due to bad char: {}", name);
+                continue;
+            }
             if is_full {
                 info!("FS readdir: is_full: to_skip={} offset={}", to_skip, offset);
                 break;

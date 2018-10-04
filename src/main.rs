@@ -91,70 +91,92 @@ fn main() {
 
     let fs = PhotoFs::new(remote_photo_lib.clone(), db.clone());
 
-    let executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
-    {
-        let remote_photo_lib = remote_photo_lib.clone();
-        let db = db.clone();
+    if option_env!("PHOTOOXIDE_DISABLE_REFRESH").is_none() {
+        let executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
+        {
+            let remote_photo_lib = remote_photo_lib.clone();
+            let db = db.clone();
 
-        let album_update_delay = match db.last_updated_album().unwrap() {
-            Some(_) => time::Duration::seconds(60),
-            None => time::Duration::seconds(5),
-        };
-        info!("album_update_delay: {}", album_update_delay);
+            let album_update_delay = match db.last_updated_album().unwrap() {
+                Some(_) => time::Duration::seconds(60),
+                None => time::Duration::seconds(5),
+            };
+            info!("album_update_delay: {}", album_update_delay);
 
-        executor.schedule_fixed_rate(
-            album_update_delay.to_std().unwrap(),
-            time::Duration::hours(12).to_std().unwrap(),
-            move |_remote| {
-                warn!("Start background albums refresh");
-                let remote_photo_lib = remote_photo_lib.lock().unwrap();
-                for album in remote_photo_lib.albums().unwrap() {
-                    match db.upsert_album(&album.google_id(), &album.name, &Utc::now()) {
-                        Ok(inode) => debug!("upserted album='{:?}' into inode={:?}", album, inode),
-                        Err(error) => {
-                            error!("Failed to upsert album='{:?}' due to {:?}", album, error)
+            executor.schedule_fixed_rate(
+                album_update_delay.to_std().unwrap(),
+                time::Duration::hours(12).to_std().unwrap(),
+                move |_remote| {
+                    warn!("Start background albums refresh");
+                    let remote_photo_lib = remote_photo_lib.lock().unwrap();
+                    for album in remote_photo_lib.albums().unwrap() {
+                        match db.upsert_album(&album.google_id(), &album.name, &Utc::now()) {
+                            Ok(inode) => {
+                                debug!("upserted album='{:?}' into inode={:?}", album, inode)
+                            }
+                            Err(error) => {
+                                error!("Failed to upsert album='{:?}' due to {:?}", album, error)
+                            }
+                        }
+                        for media_item_in_album in
+                            remote_photo_lib.album(&album.google_id()).unwrap()
+                        {
+                            warn!("Found {} in album {}", media_item_in_album.name, album.name);
+                            match db.upsert_media_item_in_album(
+                                album.google_id(),
+                                media_item_in_album.google_id(),
+                            ) {
+                                Ok(()) => debug!(
+                                    "upsert media_item='{:?}' into album='{:?}'",
+                                    media_item_in_album, album
+                                ),
+                                Err(error) => error!(
+                                "Failed to upsert media_item='{:?}' into album='{:?}' due to {:?}",
+                                media_item_in_album, album, error
+                            ),
+                            }
                         }
                     }
-                }
-                warn!("End background albums refresh");
-            },
-        );
-    }
-    {
-        let remote_photo_lib = remote_photo_lib.clone();
-        let db = db.clone();
+                    warn!("End background albums refresh");
+                },
+            );
+        }
+        {
+            let remote_photo_lib = remote_photo_lib.clone();
+            let db = db.clone();
 
-        let media_update_delay = match db.last_updated_media().unwrap() {
-            Some(_) => time::Duration::minutes(5),
-            None => time::Duration::seconds(10),
-        };
-        info!("media_update_delay: {}", media_update_delay);
+            let media_update_delay = match db.last_updated_media().unwrap() {
+                Some(_) => time::Duration::minutes(5),
+                None => time::Duration::seconds(10),
+            };
+            info!("media_update_delay: {}", media_update_delay);
 
-        executor.schedule_fixed_rate(
-            media_update_delay.to_std().unwrap(),
-            time::Duration::days(5).to_std().unwrap(),
-            move |_remote| {
-                warn!("Start background media_items refresh");
-                let remote_photo_lib = remote_photo_lib.lock().unwrap();
-                for media_item in remote_photo_lib.media_items().unwrap() {
-                    match db.upsert_media_item(
-                        &media_item.google_id(),
-                        &media_item.name,
-                        &Utc::now(),
-                    ) {
-                        Ok(inode) => debug!(
-                            "upserted media_item='{:?}' into inode={:?}",
-                            media_item, inode
-                        ),
-                        Err(error) => error!(
-                            "Failed to upsert media_item='{:?}' due to {:?}",
-                            media_item, error
-                        ),
+            executor.schedule_fixed_rate(
+                media_update_delay.to_std().unwrap(),
+                time::Duration::days(5).to_std().unwrap(),
+                move |_remote| {
+                    warn!("Start background media_items refresh");
+                    let remote_photo_lib = remote_photo_lib.lock().unwrap();
+                    for media_item in remote_photo_lib.media_items().unwrap() {
+                        match db.upsert_media_item(
+                            &media_item.google_id(),
+                            &media_item.name,
+                            &Utc::now(),
+                        ) {
+                            Ok(inode) => debug!(
+                                "upserted media_item='{:?}' into inode={:?}",
+                                media_item, inode
+                            ),
+                            Err(error) => error!(
+                                "Failed to upsert media_item='{:?}' due to {:?}",
+                                media_item, error
+                            ),
+                        }
                     }
-                }
-                warn!("End background media_items refresh");
-            },
-        );
+                    warn!("End background media_items refresh");
+                },
+            );
+        }
     }
 
     let mountpoint = env::args_os().nth(1).unwrap();
