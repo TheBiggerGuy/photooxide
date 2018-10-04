@@ -2,8 +2,8 @@ extern crate chrono;
 
 use chrono::prelude::*;
 use chrono::Utc;
-use std::fmt;
 use std::convert::From;
+use std::fmt;
 
 #[derive(Debug)]
 pub enum MediaTypes {
@@ -32,15 +32,37 @@ impl<'a> From<&'a str> for MediaTypes {
 
 pub type Inode = u64;
 pub type UtcDateTime = DateTime<Utc>;
-pub type GoogleId = String;
+pub type GoogleId = str;
 
 #[derive(Debug)]
 pub struct PhotoDbMediaItemAlbum {
-    pub google_id: GoogleId,
+    id: String,
     pub name: String,
     pub media_type: MediaTypes,
     pub last_remote_check: UtcDateTime,
     pub inode: Inode,
+}
+
+impl PhotoDbMediaItemAlbum {
+    pub fn new(
+        id: String,
+        name: String,
+        media_type: MediaTypes,
+        last_remote_check: UtcDateTime,
+        inode: Inode,
+    ) -> PhotoDbMediaItemAlbum {
+        PhotoDbMediaItemAlbum {
+            id,
+            name,
+            media_type,
+            last_remote_check,
+            inode,
+        }
+    }
+
+    pub fn google_id(&self) -> &GoogleId {
+        &self.id
+    }
 }
 
 pub type PhotoDbAlbum = PhotoDbMediaItemAlbum;

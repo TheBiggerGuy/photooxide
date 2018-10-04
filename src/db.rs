@@ -16,7 +16,9 @@ use std::sync::RwLock;
 
 use chrono::{TimeZone, Utc};
 
-use domain::{GoogleId, Inode, PhotoDbAlbum, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime, MediaTypes};
+use domain::{
+    GoogleId, Inode, MediaTypes, PhotoDbAlbum, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime,
+};
 
 #[derive(Debug)]
 pub enum DbError {
@@ -78,13 +80,13 @@ pub trait PhotoDb: PhotoDbRo + Sized {
     fn upsert_media_item(
         &self,
         id: &GoogleId,
-        filename: &String,
+        filename: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError>;
     fn upsert_album(
         &self,
         id: &GoogleId,
-        title: &String,
+        title: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError>;
 }
@@ -161,13 +163,13 @@ fn row_to_item(row: &rusqlite::Row) -> PhotoDbMediaItemAlbum {
     let name: String = row.get(2);
     let last_remote_check: i64 = row.get(3);
     let inode: i64 = row.get(4);
-    PhotoDbMediaItemAlbum {
+    PhotoDbMediaItemAlbum::new(
         google_id,
         name,
-        media_type: MediaTypes::from(media_type.as_str()),
-        last_remote_check: Utc::timestamp(&Utc, last_remote_check, 0),
-        inode: inode as u64,
-    }
+        MediaTypes::from(media_type.as_str()),
+        Utc::timestamp(&Utc, last_remote_check, 0),
+        inode as u64,
+    )
 }
 
 fn row_to_option_datetime(row: &rusqlite::Row) -> Result<Option<UtcDateTime>, DbError> {
@@ -223,11 +225,9 @@ impl PhotoDbRo for SqliteDb {
         let result = self.item_by_inode(inode)?;
         match result {
             None => Result::Ok(Option::None),
-            Some(item) => {
-                match item.media_type {
-                    MediaTypes::MediaItem => Result::Ok(Option::Some(item)),
-                    _ => Result::Ok(Option::None),
-                }
+            Some(item) => match item.media_type {
+                MediaTypes::MediaItem => Result::Ok(Option::Some(item)),
+                _ => Result::Ok(Option::None),
             },
         }
     }
@@ -258,15 +258,13 @@ impl PhotoDbRo for SqliteDb {
         }
     }
 
-        fn album_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbAlbum>, DbError> {
+    fn album_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbAlbum>, DbError> {
         let result = self.item_by_inode(inode)?;
         match result {
             None => Result::Ok(Option::None),
-            Some(item) => {
-                match item.media_type {
-                    MediaTypes::Album => Result::Ok(Option::Some(item)),
-                    _ => Result::Ok(Option::None),
-                }
+            Some(item) => match item.media_type {
+                MediaTypes::Album => Result::Ok(Option::Some(item)),
+                _ => Result::Ok(Option::None),
             },
         }
     }
@@ -274,8 +272,12 @@ impl PhotoDbRo for SqliteDb {
     fn item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItemAlbum>, DbError> {
         let db = self.db.read()?;
         let result: Result<PhotoDbMediaItemAlbum, rusqlite::Error> = db.query_row(
-            &format!("SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE inode = ?;", TableName::AlbumsAndMediaItems),
-            &[&(inode as i64)], row_to_item,
+            &format!(
+                "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE inode = ?;",
+                TableName::AlbumsAndMediaItems
+            ),
+            &[&(inode as i64)],
+            row_to_item,
         );
         match result {
             Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
@@ -285,11 +287,11 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError> {
-        self.last_updated_x(MediaTypes::MediaItem)
+        self.last_updated_x(&MediaTypes::MediaItem)
     }
 
     fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError> {
-        self.last_updated_x(MediaTypes::Album)
+        self.last_updated_x(&MediaTypes::Album)
     }
 }
 
@@ -297,13 +299,13 @@ impl PhotoDb for SqliteDb {
     fn upsert_media_item(
         &self,
         id: &GoogleId,
-        filename: &String,
+        filename: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
         let inode = self.get_and_update_inode()?;
         self.upsert_x(
             id,
-            MediaTypes::MediaItem,
+            &MediaTypes::MediaItem,
             filename,
             inode,
             &last_modified_time,
@@ -313,11 +315,11 @@ impl PhotoDb for SqliteDb {
     fn upsert_album(
         &self,
         id: &GoogleId,
-        title: &String,
+        title: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
         let inode = self.get_and_update_inode()?;
-        self.upsert_x(id, MediaTypes::Album, title, inode, &last_modified_time)
+        self.upsert_x(id, &MediaTypes::Album, title, inode, &last_modified_time)
     }
 }
 
@@ -347,7 +349,7 @@ impl SqliteDb {
         Result::Ok(SqliteDb { db })
     }
 
-    fn last_updated_x(&self, media_type: MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
+    fn last_updated_x(&self, media_type: &MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
         self.db.read()?.query_row(
             &format!(
                 "SELECT MIN(last_remote_check) AS min_last_remote_check FROM '{}' WHERE type = ?;",
@@ -361,8 +363,8 @@ impl SqliteDb {
     fn upsert_x(
         &self,
         id: &GoogleId,
-        media_type: MediaTypes,
-        name: &String,
+        media_type: &MediaTypes,
+        name: &str,
         inode: Inode,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
@@ -371,7 +373,7 @@ impl SqliteDb {
         let last_modified_time = last_modified_time.timestamp();
         self.db.write()?.execute(
             &format!("INSERT OR REPLACE INTO '{}' (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TableName::AlbumsAndMediaItems),
-            &[id, &media_type, name, &inode_signed, &last_modified_time],
+            &[&id, &media_type, &name, &inode_signed, &last_modified_time],
         )?;
         Result::Ok(inode)
     }

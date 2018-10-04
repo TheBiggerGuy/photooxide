@@ -136,11 +136,7 @@ where
         match self.photo_db.album_by_name(&String::from(name)) {
             Ok(Option::Some(album)) => reply.entry(
                 &TTL,
-                &make_atr(
-                    album.inode,
-                    0,
-                    FileType::Directory,
-                ),
+                &make_atr(album.inode, 0, FileType::Directory),
                 GENERATION,
             ),
             Ok(Option::None) => {
@@ -167,11 +163,7 @@ where
         match self.photo_db.media_item_by_name(&String::from(name)) {
             Ok(Option::Some(media_item)) => reply.entry(
                 &TTL,
-                &make_atr(
-                    media_item.inode,
-                    0,
-                    FileType::RegularFile,
-                ),
+                &make_atr(media_item.inode, 0, FileType::RegularFile),
                 GENERATION,
             ),
             Ok(Option::None) => {
@@ -238,10 +230,7 @@ where
             _ => {
                 match self.photo_db.item_by_inode(ino) {
                     Err(error) => {
-                        error!(
-                            "FS getattr: Failed to lookup item in local db: {:?}",
-                            error
-                        );
+                        error!("FS getattr: Failed to lookup item in local db: {:?}", error);
                         reply.error(ENOENT);
                         return;
                     }
@@ -255,14 +244,8 @@ where
                             MediaTypes::Album => FileType::Directory,
                             MediaTypes::MediaItem => FileType::RegularFile,
                         };
-                        reply.attr(
-                            &TTL,
-                            &make_atr(
-                                item.inode,
-                                0,
-                                file_type,
-                        ));
-                    },
+                        reply.attr(&TTL, &make_atr(item.inode, 0, file_type));
+                    }
                 };
             }
         };
@@ -291,7 +274,7 @@ where
                 }
                 Ok(Option::Some(media_item)) => {
                     let photo_lib = self.photo_lib.lock().unwrap();
-                    match photo_lib.media_item(media_item.google_id) {
+                    match photo_lib.media_item(media_item.google_id()) {
                         Err(error) => {
                             error!(
                                 "FS open: Failed to fetch media item from remote: {:?}",
