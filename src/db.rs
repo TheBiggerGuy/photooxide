@@ -607,6 +607,29 @@ mod test {
         let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
         assert_eq!(media_items_in_album.len(), 1);
         assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
+
+        // Test upsert updates correctly
+        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem1")
+            .unwrap();
+        let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
+        assert_eq!(media_items_in_album.len(), 1);
+        assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
+
+        // Test multiple photos in album
+        db.upsert_media_item(&"GoogleIdMediaItem2", &"Media Item 2", &now)
+            .unwrap();
+        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem2").unwrap();
+
+        let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
+        assert_eq!(media_items_in_album.len(), 2);
+        assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
+        assert_eq!(media_items_in_album[1].google_id(), "GoogleIdMediaItem2");
+
+        // Upsert fails if no album or media item is present in other tables
+        assert!(db.upsert_media_item_in_album("GoogleIdAlbum2", "GoogleIdMediaItem1")
+            .is_err());
+        assert!(db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem3")
+            .is_err());
     }
 
     /*
