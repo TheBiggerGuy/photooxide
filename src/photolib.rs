@@ -220,3 +220,16 @@ where
         Result::Ok(all_media_items_in_album)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn item_listing_google_id() {
+        assert_eq!(
+            ItemListing::new(String::from("id"), String::from("name")).google_id(),
+            "id"
+        );
+    }
+}
