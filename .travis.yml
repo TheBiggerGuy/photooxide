@@ -10,25 +10,34 @@ matrix:
     - rust: nightly
   fast_finish: true
 
-# Required headers to build against libfuse
 addons:
   apt:
     packages:
+      # Required headers to build against libfuse
       - libfuse-dev
+      # necessary for `travis-cargo coveralls --no-sudo`
+      - libcurl4-openssl-dev
+      - libelf-dev
+      - libdw-dev
+      - binutils-dev # optional: only required for the --verify flag of coveralls
 
 before_script:
+  - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
   - rustup component add clippy-preview
   - rustup component add rustfmt-preview
   - mv client_secret.travis.json client_secret.json
 script:
   # build
-  - cargo build
+  - travis-cargo build
 
   # test
-  - cargo test
+  - travis-cargo test
 
   # lint
   - cargo fmt --all -- --check
   - cargo clippy --all-targets --all-features -- -D warnings
+after_success:
+  - travis-cargo coveralls --no-sudo --verify
+
 
 cache: cargo
