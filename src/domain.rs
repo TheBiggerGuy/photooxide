@@ -5,7 +5,7 @@ use chrono::Utc;
 use std::convert::From;
 use std::fmt;
 
-#[derive(Debug)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
 pub enum MediaTypes {
     Album,
     MediaItem,
@@ -67,3 +67,23 @@ impl PhotoDbMediaItemAlbum {
 
 pub type PhotoDbAlbum = PhotoDbMediaItemAlbum;
 pub type PhotoDbMediaItem = PhotoDbMediaItemAlbum;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn media_types_from_string() {
+        assert_eq!(MediaTypes::from("album"), MediaTypes::Album);
+        assert_eq!(MediaTypes::from("media_item"), MediaTypes::MediaItem);
+    }
+
+    #[test]
+    fn media_types_to_string() {
+        assert_eq!(format!("{}", MediaTypes::Album), "album");
+        assert_eq!(format!("{:?}", MediaTypes::Album), "Album");
+
+        assert_eq!(format!("{}", MediaTypes::MediaItem), "media_item");
+        assert_eq!(format!("{:?}", MediaTypes::MediaItem), "MediaItem");
+    }
+}

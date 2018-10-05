@@ -343,11 +343,11 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError> {
-        self.last_updated_x(&MediaTypes::MediaItem)
+        self.last_updated_x(MediaTypes::MediaItem)
     }
 
     fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError> {
-        self.last_updated_x(&MediaTypes::Album)
+        self.last_updated_x(MediaTypes::Album)
     }
 }
 
@@ -361,7 +361,7 @@ impl PhotoDb for SqliteDb {
         let inode = self.get_and_update_inode()?;
         self.upsert_x(
             id,
-            &MediaTypes::MediaItem,
+            MediaTypes::MediaItem,
             filename,
             inode,
             &last_modified_time,
@@ -375,7 +375,7 @@ impl PhotoDb for SqliteDb {
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
         let inode = self.get_and_update_inode()?;
-        self.upsert_x(id, &MediaTypes::Album, title, inode, &last_modified_time)
+        self.upsert_x(id, MediaTypes::Album, title, inode, &last_modified_time)
     }
 
     fn upsert_media_item_in_album(
@@ -417,7 +417,7 @@ impl SqliteDb {
         Result::Ok(SqliteDb { db })
     }
 
-    fn last_updated_x(&self, media_type: &MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
+    fn last_updated_x(&self, media_type: MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
         self.db.read()?.query_row(
             &format!(
                 "SELECT MIN(last_remote_check) AS min_last_remote_check FROM '{}' WHERE type = ?;",
@@ -431,7 +431,7 @@ impl SqliteDb {
     fn upsert_x(
         &self,
         id: &GoogleId,
-        media_type: &MediaTypes,
+        media_type: MediaTypes,
         name: &str,
         inode: Inode,
         last_modified_time: &UtcDateTime,
