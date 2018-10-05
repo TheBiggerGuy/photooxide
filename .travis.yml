@@ -1,4 +1,18 @@
 sudo: false
+addons:
+  apt:
+    packages:
+      # Required headers to build against libfuse
+      - libfuse-dev
+      # necessary for kcov
+      - libcurl4-openssl-dev
+      - libelf-dev
+      - libdw-dev
+      - libiberty-dev
+      - binutils-dev
+      - cmake
+      - gcc
+
 language: rust
 rust:
   - stable
@@ -7,37 +21,44 @@ rust:
 
 matrix:
   allow_failures:
-    - rust: nightly
+    - rust: nightly 
   fast_finish: true
 
-addons:
-  apt:
-    packages:
-      # Required headers to build against libfuse
-      - libfuse-dev
-      # necessary for `travis-cargo coveralls --no-sudo`
-      - libcurl4-openssl-dev
-      - libelf-dev
-      - libdw-dev
-      - binutils-dev # optional: only required for the --verify flag of coveralls
+stages:
+  - name: test
+  - name: lint
+  - name: coverage
 
+install: true
 before_script:
-  - pip install 'travis-cargo<0.2' --user && export PATH=$HOME/.local/bin:$PATH
-  - rustup component add clippy-preview
-  - rustup component add rustfmt-preview
   - mv client_secret.travis.json client_secret.json
-script:
-  # build
-  - travis-cargo --quiet build
 
-  # test
-  - travis-cargo --quiet test
+# Default script is the "test" stage
+script: 
+  - cargo build
+  - cargo test
 
-  # lint
-  - cargo fmt --all -- --check
-  - cargo clippy --all-targets --all-features -- -D warnings
-after_success:
-  - travis-cargo --quiet coveralls --no-sudo --verify
+jobs:
+  include:
+    - stage: lint
+      rust: stable
+      install:
+        - rustup component add clippy-preview
+        - rustup component add rustfmt-preview
+      script:
+        - cargo fmt --all -- --check
+        - cargo clippy --all-targets --all-features -- -D warnings
 
-
-cache: cargo
+    - stage: coverage
+      sudo: true
+      rust: stable
+      if: os = linux
+      install:
+        - ./.travis/kcov.sh "v36" "29ccdde3bd44f14e0d7c88d709e1e5ff9b448e735538ae45ee08b73c19a2ea0b" && export PATH="kcov/usr/bin:${PATH}";
+      script:
+        - cargo test
+        - for file in target/debug/photooxide-*[^\.d]; do
+            mkdir -p "target/cov/$(basename ${file})";
+            kcov --exclude-pattern='/.cargo,/usr/lib' --verify "target/cov/$(basename $file)" "${file}";
+          done
+        - bash <(curl -s https://codecov.io/bash)

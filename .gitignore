@@ -19,3 +19,5 @@ token_storage.json
 # caches
 cache.sqlite
 
+# Travis temp files
+kcov
