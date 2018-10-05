@@ -28,16 +28,16 @@ before_script:
   - mv client_secret.travis.json client_secret.json
 script:
   # build
-  - travis-cargo build
+  - travis-cargo --quiet build
 
   # test
-  - travis-cargo test
+  - travis-cargo --quiet test
 
   # lint
   - cargo fmt --all -- --check
   - cargo clippy --all-targets --all-features -- -D warnings
 after_success:
-  - travis-cargo coveralls --no-sudo --verify
+  - travis-cargo --quiet coveralls --no-sudo --verify
 
 
 cache: cargo
