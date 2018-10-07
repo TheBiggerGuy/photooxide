@@ -19,9 +19,9 @@ use rust_filesystem::{
 use db::{DbError, PhotoDb};
 use domain::{Inode, MediaTypes, PhotoDbAlbum};
 use photolib::*;
-use rust_filesystem::RustFilesystem;
+use rust_filesystem::{RustFilesystem, UniqRequest};
 
-use fuse::{FileAttr, FileType, Request};
+use fuse::{FileAttr, FileType};
 use time::Timespec;
 
 const FIXED_INODE_ROOT: u64 = fuse::FUSE_ROOT_ID;
@@ -99,7 +99,7 @@ where
         }
     }
 
-    fn lookup_root(&mut self, _req: &Request, name: &OsStr) -> FuseResult<FileEntryResponse> {
+    fn lookup_root(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
         match name.to_str().unwrap() {
             "hello.txt" => Result::Ok(FileEntryResponse {
                 ttl: &TTL,
@@ -130,7 +130,7 @@ where
         }
     }
 
-    fn lookup_albums(&mut self, _req: &Request, name: &OsStr) -> FuseResult<FileEntryResponse> {
+    fn lookup_albums(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
         let name = name.to_str().unwrap();
         match self.photo_db.album_by_name(&String::from(name)) {
             Ok(Option::Some(album)) => Result::Ok(FileEntryResponse {
@@ -158,13 +158,13 @@ where
     // TODO: Check photo by name is actually in that album
     fn lookup_media_items_in_album(
         &mut self,
-        _req: &Request,
+        _req: &UniqRequest,
         name: &OsStr,
     ) -> FuseResult<FileEntryResponse> {
         self.lookup_media(_req, name)
     }
 
-    fn lookup_media(&mut self, _req: &Request, name: &OsStr) -> FuseResult<FileEntryResponse> {
+    fn lookup_media(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
         let name = name.to_str().unwrap();
         match self.photo_db.media_item_by_name(&String::from(name)) {
             Ok(Option::Some(media_item)) => Result::Ok(FileEntryResponse {
@@ -286,7 +286,7 @@ where
 {
     fn lookup(
         &mut self,
-        req: &Request,
+        req: &UniqRequest,
         parent: u64,
         name: &OsStr,
     ) -> FuseResult<FileEntryResponse> {
@@ -314,7 +314,7 @@ where
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64) -> FuseResult<FileAttrResponse> {
+    fn getattr(&mut self, _req: &UniqRequest, ino: u64) -> FuseResult<FileAttrResponse> {
         debug!("FS getattr: ino={}", ino);
         match ino {
             FIXED_INODE_ROOT => Result::Ok(FileAttrResponse {
@@ -360,7 +360,7 @@ where
         }
     }
 
-    fn open(&mut self, _req: &Request, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
+    fn open(&mut self, _req: &UniqRequest, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
         debug!("FS open: ino={}", ino);
 
         let file_data: Vec<u8>;
@@ -415,7 +415,7 @@ where
 
     fn read(
         &mut self,
-        _req: &Request,
+        _req: &UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
@@ -436,7 +436,7 @@ where
 
     fn release(
         &mut self,
-        _req: &Request,
+        _req: &UniqRequest,
         ino: u64,
         fh: u64,
         _flags: u32,
@@ -451,7 +451,7 @@ where
         }
     }
 
-    fn opendir(&mut self, _req: &Request, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
+    fn opendir(&mut self, _req: &UniqRequest, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
         let album_for_inode: Option<PhotoDbAlbum> = match ino {
             FIXED_INODE_ROOT | FIXED_INODE_MEDIA | FIXED_INODE_ALBUMS => Result::Ok(Option::None),
             _ => match self.photo_db.album_by_inode(ino) {
@@ -493,7 +493,7 @@ where
 
     fn readdir(
         &mut self,
-        _req: &Request,
+        _req: &UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
@@ -530,7 +530,7 @@ where
         })
     }
 
-    fn releasedir(&mut self, _req: &Request, ino: u64, fh: u64, _flags: u32) -> FuseResult<()> {
+    fn releasedir(&mut self, _req: &UniqRequest, ino: u64, fh: u64, _flags: u32) -> FuseResult<()> {
         debug!("FS releasedir: ino={}, fh={}", ino, fh);
 
         match self.open_dirs.remove(&fh) {

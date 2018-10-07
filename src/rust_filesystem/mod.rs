@@ -1,73 +1,32 @@
 use std::ffi::OsStr;
-use std::result;
 
 use fuse::{
-    FileAttr, FileType, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry,
-    ReplyOpen, Request,
+    self, Filesystem, ReplyAttr, ReplyData, ReplyDirectory, ReplyEmpty, ReplyEntry, ReplyOpen,
 };
-use libc;
-use time::Timespec;
 
-#[derive(Debug)]
-pub enum FuseError {
-    FunctionNotImplemented,
-}
+mod error;
+pub use self::error::{FuseError, FuseResult};
 
-impl FuseError {
-    fn libc_error_code(&self) -> i32 {
-        match self {
-            _ => libc::ENOENT,
-        }
-    }
-}
+mod response;
+pub use self::response::{
+    FileAttrResponse, FileEntryResponse, OpenResponse, ReadDirEntry, ReadDirResponse, ReadResponse,
+};
 
-pub type FuseResult<T> = result::Result<T, FuseError>;
-
-#[derive(Debug)]
-pub struct FileEntryResponse<'a> {
-    pub ttl: &'a Timespec,
-    pub attr: FileAttr,
-    pub generation: u64,
-}
-
-#[derive(Debug)]
-pub struct FileAttrResponse<'a> {
-    pub ttl: &'a Timespec,
-    pub attr: FileAttr,
-}
-
-#[derive(Debug)]
-pub struct OpenResponse {
-    pub fh: u64,
-    pub flags: u32,
-}
-
-#[derive(Debug)]
-pub struct ReadResponse<'a> {
-    pub data: &'a [u8],
-}
-
-#[derive(Debug)]
-pub struct ReadDirResponse<'a> {
-    pub entries: Vec<ReadDirEntry<'a>>,
-}
-
-#[derive(Debug)]
-pub struct ReadDirEntry<'a> {
-    pub ino: u64,
-    pub offset: i64,
-    pub kind: FileType,
-    pub name: &'a OsStr,
-}
+mod request;
+pub use self::request::UniqRequest;
 
 pub trait RustFilesystem {
-    fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr)
-        -> FuseResult<FileEntryResponse>;
-    fn getattr(&mut self, req: &Request, ino: u64) -> FuseResult<FileAttrResponse>;
-    fn open(&mut self, req: &Request, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
+    fn lookup(
+        &mut self,
+        req: &UniqRequest,
+        parent: u64,
+        name: &OsStr,
+    ) -> FuseResult<FileEntryResponse>;
+    fn getattr(&mut self, req: &UniqRequest, ino: u64) -> FuseResult<FileAttrResponse>;
+    fn open(&mut self, req: &UniqRequest, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
     fn read(
         &mut self,
-        req: &Request,
+        req: &UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
@@ -75,22 +34,22 @@ pub trait RustFilesystem {
     ) -> FuseResult<ReadResponse>;
     fn release(
         &mut self,
-        req: &Request,
+        req: &UniqRequest,
         ino: u64,
         fh: u64,
         flags: u32,
         lock_owner: u64,
         flush: bool,
     ) -> FuseResult<()>;
-    fn opendir(&mut self, req: &Request, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
+    fn opendir(&mut self, req: &UniqRequest, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
     fn readdir(
         &mut self,
-        req: &Request,
+        req: &UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
     ) -> FuseResult<ReadDirResponse>;
-    fn releasedir(&mut self, req: &Request, ino: u64, fh: u64, flags: u32) -> FuseResult<()>;
+    fn releasedir(&mut self, req: &UniqRequest, ino: u64, fh: u64, flags: u32) -> FuseResult<()>;
 }
 
 #[derive(Debug)]
@@ -114,28 +73,37 @@ impl<X> Filesystem for RustFilesystemReal<X>
 where
     X: RustFilesystem,
 {
-    fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, req: &fuse::Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        debug!("lookup: {:?}", req);
         match self.fs.lookup(req, parent, name) {
             Ok(response) => reply.entry(response.ttl, &response.attr, response.generation),
             Err(error) => reply.error(error.libc_error_code()),
         }
     }
 
-    fn getattr(&mut self, req: &Request, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, req: &fuse::Request, ino: u64, reply: ReplyAttr) {
         match self.fs.getattr(req, ino) {
             Ok(response) => reply.attr(response.ttl, &response.attr),
             Err(error) => reply.error(error.libc_error_code()),
         }
     }
 
-    fn open(&mut self, req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+    fn open(&mut self, req: &fuse::Request, ino: u64, flags: u32, reply: ReplyOpen) {
         match self.fs.open(req, ino, flags) {
             Ok(response) => reply.opened(response.fh, response.flags),
             Err(error) => reply.error(error.libc_error_code()),
         }
     }
 
-    fn read(&mut self, req: &Request, ino: u64, fh: u64, offset: i64, size: u32, reply: ReplyData) {
+    fn read(
+        &mut self,
+        req: &fuse::Request,
+        ino: u64,
+        fh: u64,
+        offset: i64,
+        size: u32,
+        reply: ReplyData,
+    ) {
         match self.fs.read(req, ino, fh, offset, size) {
             Ok(response) => reply.data(response.data),
             Err(error) => reply.error(error.libc_error_code()),
@@ -144,7 +112,7 @@ where
 
     fn release(
         &mut self,
-        req: &Request,
+        req: &fuse::Request,
         ino: u64,
         fh: u64,
         flags: u32,
@@ -158,7 +126,7 @@ where
         }
     }
 
-    fn opendir(&mut self, req: &Request, ino: u64, flags: u32, reply: ReplyOpen) {
+    fn opendir(&mut self, req: &fuse::Request, ino: u64, flags: u32, reply: ReplyOpen) {
         match self.fs.opendir(req, ino, flags) {
             Ok(response) => reply.opened(response.fh, response.flags),
             Err(error) => reply.error(error.libc_error_code()),
@@ -167,7 +135,7 @@ where
 
     fn readdir(
         &mut self,
-        req: &Request,
+        req: &fuse::Request,
         ino: u64,
         fh: u64,
         offset: i64,
@@ -191,20 +159,17 @@ where
         }
     }
 
-    fn releasedir(&mut self, req: &Request, ino: u64, fh: u64, flags: u32, reply: ReplyEmpty) {
+    fn releasedir(
+        &mut self,
+        req: &fuse::Request,
+        ino: u64,
+        fh: u64,
+        flags: u32,
+        reply: ReplyEmpty,
+    ) {
         match self.fs.releasedir(req, ino, fh, flags) {
             Ok(_) => reply.ok(),
             Err(error) => reply.error(error.libc_error_code()),
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn fuse_error_libc_error_code() {
-        assert_eq!(FuseError::FunctionNotImplemented.libc_error_code(), 2);
     }
 }
