@@ -16,7 +16,7 @@ use rust_filesystem::{
     ReadDirResponse, ReadResponse,
 };
 
-use db::{DbError, PhotoDb};
+use db::{DbError, PhotoDbRo};
 use domain::{Inode, MediaTypes, PhotoDbAlbum};
 use photolib::*;
 use rust_filesystem::{RustFilesystem, UniqRequest};
@@ -77,7 +77,7 @@ impl From<DbError> for PhotoFsError {
 pub struct PhotoFs<X, Y>
 where
     X: RemotePhotoLib,
-    Y: PhotoDb,
+    Y: PhotoDbRo,
 {
     photo_lib: Arc<Mutex<X>>,
     photo_db: Arc<Y>,
@@ -88,7 +88,7 @@ where
 impl<X, Y> PhotoFs<X, Y>
 where
     X: RemotePhotoLib,
-    Y: PhotoDb,
+    Y: PhotoDbRo,
 {
     pub fn new(photo_lib: Arc<Mutex<X>>, photo_db: Arc<Y>) -> PhotoFs<X, Y> {
         PhotoFs {
@@ -282,7 +282,7 @@ where
 impl<X, Y> RustFilesystem for PhotoFs<X, Y>
 where
     X: RemotePhotoLib,
-    Y: PhotoDb,
+    Y: PhotoDbRo,
 {
     fn lookup(
         &mut self,
@@ -543,6 +543,11 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use domain::GoogleId;
+    use domain::PhotoDbMediaItem;
+    use domain::PhotoDbMediaItemAlbum;
+    use domain::UtcDateTime;
+    use hyper;
 
     #[test]
     fn make_atr_test() {
@@ -561,5 +566,100 @@ mod test {
             make_atr(100, 1, FileType::Directory).kind,
             FileType::Directory
         );
+    }
+
+    #[test]
+    fn releasedir_no_previous_opendir() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        assert!(fs.releasedir(&TestUniqRequest {}, 1, 0, 0).is_err());
+    }
+
+    #[derive(Debug)]
+    struct TestUniqRequest {}
+
+    impl UniqRequest for TestUniqRequest {
+        fn unique(&self) -> u64 {
+            0
+        }
+        fn uid(&self) -> u32 {
+            0
+        }
+        fn gid(&self) -> u32 {
+            0
+        }
+        fn pid(&self) -> u32 {
+            0
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestRemotePhotoLib {}
+
+    impl RemotePhotoLib for TestRemotePhotoLib {
+        fn media_items(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
+            Result::Err(RemotePhotoLibError::HttpApiError(
+                hyper::status::StatusCode::NotFound,
+            ))
+        }
+        fn media_item(&self, _google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
+            Result::Err(RemotePhotoLibError::HttpApiError(
+                hyper::status::StatusCode::NotFound,
+            ))
+        }
+
+        fn albums(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
+            Result::Err(RemotePhotoLibError::HttpApiError(
+                hyper::status::StatusCode::NotFound,
+            ))
+        }
+        fn album(&self, _google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
+            Result::Err(RemotePhotoLibError::HttpApiError(
+                hyper::status::StatusCode::NotFound,
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestPhotoDb {}
+
+    impl PhotoDbRo for TestPhotoDb {
+        // Listings
+        fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn media_items_in_album(&self, _inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+
+        // Single items
+        fn media_item_by_name(&self, _name: &str) -> Result<Option<PhotoDbMediaItem>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn media_item_by_inode(&self, _inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn album_by_name(&self, _name: &str) -> Result<Option<PhotoDbAlbum>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn album_by_inode(&self, _inode: Inode) -> Result<Option<PhotoDbAlbum>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn item_by_inode(&self, _inode: Inode) -> Result<Option<PhotoDbMediaItemAlbum>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+
+        // Check staleness
+        fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
+        fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError> {
+            Result::Err(DbError::LockingError)
+        }
     }
 }
