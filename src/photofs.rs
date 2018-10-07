@@ -569,6 +569,135 @@ mod test {
     }
 
     #[test]
+    fn open_read_release_hello_txt() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
+            .unwrap()
+            .fh;
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
+                .unwrap();
+
+            assert_eq!(response.data, "Hello World!\n".as_bytes());
+        }
+
+        assert!(
+            fs.release(
+                &TestUniqRequest {},
+                FIXED_INODE_HELLO_WORLD,
+                fh,
+                0,
+                0,
+                false
+            ).is_ok()
+        );
+    }
+
+    #[test]
+    fn read_offset() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
+            .unwrap()
+            .fh;
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
+                .unwrap();
+            assert_eq!(response.data, "Hello World!\n".as_bytes());
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 1, 12)
+                .unwrap();
+            assert_eq!(response.data, "ello World!\n".as_bytes());
+        }
+    }
+
+    #[test]
+    fn read_size() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let open = fs
+            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
+            .unwrap();
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 13)
+                .unwrap();
+            assert_eq!(response.data, "Hello World!\n".as_bytes());
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 5)
+                .unwrap();
+            assert_eq!(response.data, "Hello".as_bytes());
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 15)
+                .unwrap();
+            assert_eq!(response.data, "Hello World!\n".as_bytes());
+            assert_eq!(open.flags, 1); // assert direct IO or the response should be zero padded
+        }
+    }
+
+    #[test]
+    fn opendir_multiple_calls() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let response1 = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap();
+        let response2 = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap();
+
+        assert_eq!(response1.fh, FIXED_INODE_ROOT);
+        assert_eq!(response2.fh, FIXED_INODE_ROOT + 1);
+    }
+
+    #[test]
+    fn readdir_root() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap()
+            .fh;
+
+        let response = fs
+            .readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
+            .unwrap();
+
+        assert_eq!(response.entries.len(), 4);
+        assert_eq!(response.entries[0].ino, FIXED_INODE_ROOT);
+        assert_eq!(response.entries[1].ino, FIXED_INODE_ALBUMS);
+        assert_eq!(response.entries[2].ino, FIXED_INODE_MEDIA);
+        assert_eq!(response.entries[3].ino, FIXED_INODE_HELLO_WORLD);
+    }
+
+    #[test]
     fn releasedir_no_previous_opendir() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
         let photo_db = Arc::new(TestPhotoDb {});
