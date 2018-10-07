@@ -510,6 +510,53 @@ mod test {
     use db::DbError;
 
     #[test]
+    fn lookup_root() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        {
+            assert!(
+                fs.lookup(
+                    &TestUniqRequest {},
+                    FIXED_INODE_ROOT,
+                    OsStr::new("not_in_root")
+                ).is_err()
+            );
+        }
+
+        {
+            let response = fs
+                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("albums"))
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        {
+            let response = fs
+                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("media"))
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        {
+            let response = fs
+                .lookup(
+                    &TestUniqRequest {},
+                    FIXED_INODE_ROOT,
+                    OsStr::new("hello.txt"),
+                ).unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+    }
+
+    #[test]
     fn open_read_release_hello_txt() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
         let photo_db = Arc::new(TestPhotoDb {});
