@@ -36,7 +36,7 @@ const CREATE_TIME: Timespec = Timespec {
     nsec: 0,
 }; // 2013-10-08 08:56
 
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
+const HELLO_TXT_CONTENT: &[u8] = b"Hello World!\n";
 
 const GENERATION: u64 = 0;
 
@@ -365,7 +365,7 @@ where
 
         let file_data: Vec<u8>;
         if ino == FIXED_INODE_HELLO_WORLD {
-            file_data = String::from(HELLO_TXT_CONTENT).into_bytes();
+            file_data = HELLO_TXT_CONTENT.to_vec();
         } else {
             match self.photo_db.media_item_by_inode(ino) {
                 Err(error) => {
@@ -584,7 +584,7 @@ mod test {
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
                 .unwrap();
 
-            assert_eq!(response.data, "Hello World!\n".as_bytes());
+            assert_eq!(response.data, b"Hello World!\n");
         }
 
         assert!(
@@ -614,14 +614,14 @@ mod test {
             let response = fs
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
                 .unwrap();
-            assert_eq!(response.data, "Hello World!\n".as_bytes());
+            assert_eq!(response.data, b"Hello World!\n");
         }
 
         {
             let response = fs
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 1, 12)
                 .unwrap();
-            assert_eq!(response.data, "ello World!\n".as_bytes());
+            assert_eq!(response.data, b"ello World!\n");
         }
     }
 
@@ -639,21 +639,21 @@ mod test {
             let response = fs
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 13)
                 .unwrap();
-            assert_eq!(response.data, "Hello World!\n".as_bytes());
+            assert_eq!(response.data, b"Hello World!\n");
         }
 
         {
             let response = fs
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 5)
                 .unwrap();
-            assert_eq!(response.data, "Hello".as_bytes());
+            assert_eq!(response.data, b"Hello");
         }
 
         {
             let response = fs
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 15)
                 .unwrap();
-            assert_eq!(response.data, "Hello World!\n".as_bytes());
+            assert_eq!(response.data, b"Hello World!\n");
             assert_eq!(open.flags, 1); // assert direct IO or the response should be zero padded
         }
     }
