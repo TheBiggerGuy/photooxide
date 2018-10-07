@@ -577,6 +577,23 @@ mod test {
         assert!(fs.releasedir(&TestUniqRequest {}, 1, 0, 0).is_err());
     }
 
+    #[test]
+    fn releasedir_from_previous_opendir() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap()
+            .fh;
+
+        assert!(
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
+                .is_ok()
+        );
+    }
+
     #[derive(Debug)]
     struct TestUniqRequest {}
 
