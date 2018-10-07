@@ -1,18 +1,10 @@
-extern crate google_photoslibrary1 as photoslibrary1;
-extern crate hyper;
-extern crate yup_oauth2 as oauth2;
-
-extern crate rusqlite;
-
-extern crate chrono;
-extern crate time;
-
 use std::convert::From;
 use std::fmt;
 use std::option::Option;
 use std::result::Result;
-use std::sync;
 use std::sync::RwLock;
+
+use rusqlite;
 
 use chrono::{TimeZone, Utc};
 
@@ -20,23 +12,8 @@ use domain::{
     GoogleId, Inode, MediaTypes, PhotoDbAlbum, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime,
 };
 
-#[derive(Debug)]
-pub enum DbError {
-    SqlError(rusqlite::Error),
-    LockingError,
-}
-
-impl From<rusqlite::Error> for DbError {
-    fn from(error: rusqlite::Error) -> Self {
-        DbError::SqlError(error)
-    }
-}
-
-impl<T> From<sync::PoisonError<T>> for DbError {
-    fn from(_error: sync::PoisonError<T>) -> Self {
-        DbError::LockingError
-    }
-}
+mod error;
+pub use self::error::DbError;
 
 #[derive(Debug)]
 enum TableName {
