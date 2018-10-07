@@ -510,25 +510,6 @@ mod test {
     use db::DbError;
 
     #[test]
-    fn make_atr_test() {
-        // Inode
-        assert_eq!(make_atr(100, 0, FileType::RegularFile).ino, 100);
-
-        // Size
-        assert_eq!(make_atr(100, 1, FileType::RegularFile).size, 1);
-
-        // FileType
-        assert_eq!(
-            make_atr(100, 1, FileType::RegularFile).kind,
-            FileType::RegularFile
-        );
-        assert_eq!(
-            make_atr(100, 1, FileType::Directory).kind,
-            FileType::Directory
-        );
-    }
-
-    #[test]
     fn open_read_release_hello_txt() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
         let photo_db = Arc::new(TestPhotoDb {});

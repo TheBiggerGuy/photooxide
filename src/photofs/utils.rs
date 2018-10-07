@@ -28,3 +28,27 @@ pub fn make_atr(inode: Inode, size: usize, file_type: FileType) -> FileAttr {
         flags: 0,
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn make_atr_test() {
+        // Inode
+        assert_eq!(make_atr(100, 0, FileType::RegularFile).ino, 100);
+
+        // Size
+        assert_eq!(make_atr(100, 1, FileType::RegularFile).size, 1);
+
+        // FileType
+        assert_eq!(
+            make_atr(100, 1, FileType::RegularFile).kind,
+            FileType::RegularFile
+        );
+        assert_eq!(
+            make_atr(100, 1, FileType::Directory).kind,
+            FileType::Directory
+        );
+    }
+}
