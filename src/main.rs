@@ -47,6 +47,9 @@ use photolib::{HttpRemotePhotoLib, RemotePhotoLib};
 mod photofs;
 use photofs::*;
 
+mod rust_filesystem;
+use rust_filesystem::RustFilesystemReal;
+
 const CLIENT_SECRET: &str = include_str!("../client_secret.json");
 
 fn main() {
@@ -89,7 +92,7 @@ fn main() {
         data_http_client,
     )));
 
-    let fs = PhotoFs::new(remote_photo_lib.clone(), db.clone());
+    let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
 
     if option_env!("PHOTOOXIDE_DISABLE_REFRESH").is_none() {
         let executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
