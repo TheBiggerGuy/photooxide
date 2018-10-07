@@ -1,28 +1,26 @@
-extern crate fuse;
-extern crate libc;
-extern crate time;
-
-extern crate rusqlite;
-
-extern crate users;
-
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
+
+use fuse::{self, FileType};
+use time::Timespec;
 
 use rust_filesystem::{
     FileAttrResponse, FileEntryResponse, FuseError, FuseResult, OpenResponse, ReadDirEntry,
     ReadDirResponse, ReadResponse,
 };
 
-use db::{DbError, PhotoDbRo};
-use domain::{Inode, MediaTypes, PhotoDbAlbum};
+use db::PhotoDbRo;
+use domain::{MediaTypes, PhotoDbAlbum};
 use photolib::*;
 use rust_filesystem::{RustFilesystem, UniqRequest};
 
-use fuse::{FileAttr, FileType};
-use time::Timespec;
+mod error;
+pub use self::error::PhotoFsError;
+
+mod utils;
+use self::utils::make_atr;
 
 const FIXED_INODE_ROOT: u64 = fuse::FUSE_ROOT_ID;
 const FIXED_INODE_ALBUMS: u64 = 2;
@@ -31,48 +29,9 @@ const FIXED_INODE_HELLO_WORLD: u64 = 4;
 
 const TTL: Timespec = Timespec { sec: 120, nsec: 0 }; // 2 minutes
 
-const CREATE_TIME: Timespec = Timespec {
-    sec: 1_381_237_736,
-    nsec: 0,
-}; // 2013-10-08 08:56
-
 const HELLO_TXT_CONTENT: &[u8] = b"Hello World!\n";
 
 const GENERATION: u64 = 0;
-
-fn make_atr(inode: Inode, size: usize, file_type: FileType) -> FileAttr {
-    FileAttr {
-        ino: inode,
-        size: size as u64,
-        blocks: 1,
-        atime: CREATE_TIME,
-        mtime: CREATE_TIME,
-        ctime: CREATE_TIME,
-        crtime: CREATE_TIME,
-        kind: file_type,
-        perm: 0o644,
-        nlink: 1,
-        uid: users::get_current_uid(),
-        gid: 20,
-        rdev: 0,
-        flags: 0,
-    }
-}
-
-#[derive(Debug)]
-pub enum PhotoFsError {
-    SqlError(rusqlite::Error),
-    LockingError,
-}
-
-impl From<DbError> for PhotoFsError {
-    fn from(error: DbError) -> Self {
-        match error {
-            DbError::SqlError(sql_error) => PhotoFsError::SqlError(sql_error),
-            DbError::LockingError => PhotoFsError::LockingError,
-        }
-    }
-}
 
 pub struct PhotoFs<X, Y>
 where
@@ -543,11 +502,12 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use domain::GoogleId;
-    use domain::PhotoDbMediaItem;
-    use domain::PhotoDbMediaItemAlbum;
-    use domain::UtcDateTime;
+
     use hyper;
+
+    use domain::{GoogleId, Inode, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime};
+
+    use db::DbError;
 
     #[test]
     fn make_atr_test() {
