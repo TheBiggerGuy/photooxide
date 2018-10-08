@@ -290,7 +290,7 @@ where
         match ino {
             FIXED_INODE_ROOT => Result::Ok(FileAttrResponse {
                 ttl: &TTL,
-                attr: make_atr(FIXED_INODE_ROOT, 0, FileType::Directory),
+                attr: make_atr(FIXED_INODE_ROOT, 4, FileType::Directory),
             }),
             FIXED_INODE_ALBUMS => Result::Ok(FileAttrResponse {
                 ttl: &TTL,
@@ -585,6 +585,47 @@ mod test {
 
             assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
             assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+    }
+
+    #[test]
+    fn getattr_static() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        {
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ROOT).unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_ROOT);
+            assert_eq!(response.attr.kind, FileType::Directory);
+            assert_eq!(response.attr.size, 4);
+        }
+
+        {
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ALBUMS).unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.attr.kind, FileType::Directory);
+            assert_eq!(response.attr.size, 0);
+        }
+
+        {
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_MEDIA).unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.attr.kind, FileType::Directory);
+            assert_eq!(response.attr.size, 0);
+        }
+
+        {
+            let response = fs
+                .getattr(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD)
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+            assert_eq!(response.attr.size, 13);
         }
     }
 
