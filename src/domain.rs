@@ -1,5 +1,3 @@
-extern crate chrono;
-
 use chrono::prelude::*;
 use chrono::Utc;
 use std::convert::From;
@@ -34,7 +32,7 @@ pub type Inode = u64;
 pub type UtcDateTime = DateTime<Utc>;
 pub type GoogleId = str;
 
-#[derive(Debug)]
+#[derive(Clone, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
 pub struct PhotoDbMediaItemAlbum {
     id: String,
     pub name: String,
