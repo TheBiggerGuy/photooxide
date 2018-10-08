@@ -42,7 +42,7 @@ mod db;
 use db::{PhotoDb, PhotoDbRo, SqliteDb};
 
 mod photolib;
-use photolib::{HttpRemotePhotoLib, RemotePhotoLib};
+use photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
 
 mod photofs;
 use photofs::*;

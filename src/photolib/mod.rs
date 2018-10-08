@@ -29,12 +29,15 @@ impl ItemListing {
     }
 }
 
-pub trait RemotePhotoLib: Sized {
+pub trait RemotePhotoLibMetaData: Sized {
     fn media_items(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
-    fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError>;
 
     fn albums(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
     fn album(&self, google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
+}
+
+pub trait RemotePhotoLibData: Sized {
+    fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError>;
 }
 
 pub struct HttpRemotePhotoLib<C, A>
@@ -62,7 +65,7 @@ where
     }
 }
 
-impl<C, A> RemotePhotoLib for HttpRemotePhotoLib<C, A>
+impl<C, A> RemotePhotoLibMetaData for HttpRemotePhotoLib<C, A>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
@@ -134,25 +137,6 @@ where
         Result::Ok(all_albums)
     }
 
-    fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
-        let media_item = self.photos_library.media_items().get(&google_id).doit()?;
-        let base_url = media_item.1.base_url.unwrap();
-        let download_url = format!("{}=d", base_url);
-        info!("Have base_url={} download_url={} )", base_url, download_url);
-
-        let mut http_response = self.data_http_client.get(&download_url).send()?;
-        match http_response.status {
-            hyper::status::StatusCode::Ok => {
-                let mut buffer: Vec<u8> = Vec::new();
-                info!("Downloading {:?}", media_item.1.filename);
-                let size = http_response.read_to_end(&mut buffer)?;
-                info!("Downloaded {:?}, size={}", media_item.1.filename, size);
-                Result::Ok(buffer)
-            }
-            error => Result::Err(RemotePhotoLibError::HttpApiError(error)),
-        }
-    }
-
     fn album(&self, google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
         let mut all_media_items_in_album: Vec<ItemListing> = Vec::new();
         let mut page_token: Option<String> = Option::None;
@@ -187,6 +171,31 @@ where
             };
         }
         Result::Ok(all_media_items_in_album)
+    }
+}
+
+impl<C, A> RemotePhotoLibData for HttpRemotePhotoLib<C, A>
+where
+    C: BorrowMut<hyper::Client>,
+    A: oauth2::GetToken,
+{
+    fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
+        let media_item = self.photos_library.media_items().get(&google_id).doit()?;
+        let base_url = media_item.1.base_url.unwrap();
+        let download_url = format!("{}=d", base_url);
+        info!("Have base_url={} download_url={} )", base_url, download_url);
+
+        let mut http_response = self.data_http_client.get(&download_url).send()?;
+        match http_response.status {
+            hyper::status::StatusCode::Ok => {
+                let mut buffer: Vec<u8> = Vec::new();
+                info!("Downloading {:?}", media_item.1.filename);
+                let size = http_response.read_to_end(&mut buffer)?;
+                info!("Downloaded {:?}, size={}", media_item.1.filename, size);
+                Result::Ok(buffer)
+            }
+            error => Result::Err(RemotePhotoLibError::HttpApiError(error)),
+        }
     }
 }
 

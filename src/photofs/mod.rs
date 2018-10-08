@@ -35,7 +35,7 @@ const GENERATION: u64 = 0;
 
 pub struct PhotoFs<X, Y>
 where
-    X: RemotePhotoLib,
+    X: RemotePhotoLibData,
     Y: PhotoDbRo,
 {
     photo_lib: Arc<Mutex<X>>,
@@ -46,7 +46,7 @@ where
 
 impl<X, Y> PhotoFs<X, Y>
 where
-    X: RemotePhotoLib,
+    X: RemotePhotoLibData,
     Y: PhotoDbRo,
 {
     pub fn new(photo_lib: Arc<Mutex<X>>, photo_db: Arc<Y>) -> PhotoFs<X, Y> {
@@ -240,7 +240,7 @@ where
 
 impl<X, Y> RustFilesystem for PhotoFs<X, Y>
 where
-    X: RemotePhotoLib,
+    X: RemotePhotoLibData,
     Y: PhotoDbRo,
 {
     fn lookup(
@@ -512,15 +512,21 @@ where
 mod test {
     use super::*;
 
+    use std::sync::RwLock;
+
+    use rusqlite;
+
     use hyper;
+
+    use chrono::{TimeZone, Utc};
 
     use domain::{GoogleId, Inode, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime};
 
-    use db::DbError;
+    use db::{DbError, PhotoDb, SqliteDb};
 
     #[test]
     fn lookup_root() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -567,7 +573,7 @@ mod test {
 
     #[test]
     fn open_read_release_hello_txt() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -598,7 +604,7 @@ mod test {
 
     #[test]
     fn read_offset() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -638,7 +644,7 @@ mod test {
 
     #[test]
     fn read_size() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -670,8 +676,37 @@ mod test {
     }
 
     #[test]
+    fn read_media_item() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let photo_db = Arc::new(SqliteDb::new(in_mem_db).unwrap());
+
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let inode: Inode;
+        {
+            let mut lib = photo_lib.lock().unwrap();
+            lib.test_data.insert("GoogleId1", vec![65, 66, 67]);
+
+            let now_unix = Utc::now().timestamp();
+            let now = Utc::timestamp(&Utc, now_unix, 0);
+            inode = photo_db
+                .upsert_media_item(&String::from("GoogleId1"), &String::from("Photo 1"), &now)
+                .unwrap();
+        }
+
+        let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
+
+        {
+            let response = fs.read(&TestUniqRequest {}, inode, open.fh, 0, 5).unwrap();
+            assert_eq!(response.data, b"ABC");
+        }
+    }
+
+    #[test]
     fn opendir_multiple_calls() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -688,7 +723,7 @@ mod test {
 
     #[test]
     fn readdir_root() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -710,7 +745,7 @@ mod test {
 
     #[test]
     fn releasedir_no_previous_opendir() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -719,7 +754,7 @@ mod test {
 
     #[test]
     fn releasedir_from_previous_opendir() {
-        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(TestPhotoDb {});
         let mut fs = PhotoFs::new(photo_lib, photo_db);
 
@@ -753,29 +788,26 @@ mod test {
     }
 
     #[derive(Debug)]
-    struct TestRemotePhotoLib {}
+    struct TestRemotePhotoLib<'a> {
+        test_data: HashMap<&'a GoogleId, Vec<u8>>,
+    }
 
-    impl RemotePhotoLib for TestRemotePhotoLib {
-        fn media_items(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
-            Result::Err(RemotePhotoLibError::HttpApiError(
-                hyper::status::StatusCode::NotFound,
-            ))
+    impl<'a> TestRemotePhotoLib<'a> {
+        fn new() -> TestRemotePhotoLib<'a> {
+            TestRemotePhotoLib {
+                test_data: HashMap::new(),
+            }
         }
-        fn media_item(&self, _google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
-            Result::Err(RemotePhotoLibError::HttpApiError(
-                hyper::status::StatusCode::NotFound,
-            ))
-        }
+    }
 
-        fn albums(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
-            Result::Err(RemotePhotoLibError::HttpApiError(
-                hyper::status::StatusCode::NotFound,
-            ))
-        }
-        fn album(&self, _google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
-            Result::Err(RemotePhotoLibError::HttpApiError(
-                hyper::status::StatusCode::NotFound,
-            ))
+    impl<'a> RemotePhotoLibData for TestRemotePhotoLib<'a> {
+        fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
+            match self.test_data.get(google_id) {
+                Some(data) => Result::Ok(data.clone()),
+                None => Result::Err(RemotePhotoLibError::HttpApiError(
+                    hyper::status::StatusCode::NotFound,
+                )),
+            }
         }
     }
 
