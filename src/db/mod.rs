@@ -1,5 +1,4 @@
 use std::convert::From;
-use std::fmt;
 use std::option::Option;
 use std::result::Result;
 use std::sync::RwLock;
@@ -15,26 +14,12 @@ use domain::{
 mod error;
 pub use self::error::DbError;
 
-#[derive(Debug)]
-enum TableName {
-    AlbumsAndMediaItems,
-    NextInode,
-    MediaItemsInAlbum,
-}
+mod inode_db;
+use self::inode_db::ensure_schema_next_inode;
+pub use self::inode_db::NextInodeDb;
 
-impl fmt::Display for TableName {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            TableName::AlbumsAndMediaItems => write!(f, "albums_and_media_item"),
-            TableName::NextInode => write!(f, "next_inode"),
-            TableName::MediaItemsInAlbum => write!(f, "media_items_in_album"),
-        }
-    }
-}
-
-pub trait NextInodeDb: Sized {
-    fn get_and_update_inode(&self) -> Result<Inode, DbError>;
-}
+mod table_name;
+use self::table_name::TableName;
 
 pub trait PhotoDbRo: Sized {
     // Listings
@@ -106,24 +91,6 @@ fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
             "CREATE INDEX IF NOT EXISTS '{}_by_name' ON '{}' (name);",
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
-        ),
-        &[],
-    )?;
-
-    // NextInode
-    // inodes under 100 are for "special" nodes like the "albums" folder
-    // these are not stored in the DB as it would just mirror code.
-    db.execute(
-        &format!(
-            "CREATE TABLE IF NOT EXISTS '{}' (inode INTEGER NOT NULL);",
-            TableName::NextInode
-        ),
-        &[],
-    )?;
-    db.execute(
-        &format!(
-            "INSERT OR IGNORE INTO '{}' (inode) VALUES (100);",
-            TableName::NextInode
         ),
         &[],
     )?;
@@ -200,7 +167,7 @@ impl PhotoDbRo for SqliteDb {
     fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError> {
         let db = self.db.read()?;
         let mut statment = db.prepare(&format!(
-            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}';",
+            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
             MediaTypes::MediaItem
         ))?;
@@ -217,7 +184,7 @@ impl PhotoDbRo for SqliteDb {
     fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError> {
         let db = self.db.read()?;
         let mut statment = db.prepare(&format!(
-            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}';",
+            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
             MediaTypes::Album
         ))?;
@@ -236,7 +203,7 @@ impl PhotoDbRo for SqliteDb {
         let mut statment = db.prepare(&format!(
             "SELECT google_id, type, name, last_remote_check, inode
             FROM '{}' INNER JOIN '{}' ON '{}'.google_id = '{}'.media_item_google_id
-            WHERE type = '{}' AND album_google_id = (SELECT google_id FROM {} WHERE inode = ?);",
+            WHERE type = '{}' AND album_google_id = (SELECT google_id FROM {} WHERE inode = ?) ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
             TableName::MediaItemsInAlbum,
             TableName::AlbumsAndMediaItems,
@@ -368,29 +335,10 @@ impl PhotoDb for SqliteDb {
     }
 }
 
-impl NextInodeDb for SqliteDb {
-    // TODO: Fix locking
-    fn get_and_update_inode(&self) -> Result<Inode, DbError> {
-        let db = self.db.write()?;
-        db.execute(
-            &format!("UPDATE '{}' SET inode = inode + 1;", TableName::NextInode),
-            &[],
-        )?;
-        let result: Result<i64, rusqlite::Error> = db.query_row(
-            &format!("SELECT inode FROM '{}';", TableName::NextInode),
-            &[],
-            |row| row.get(0),
-        );
-        match result {
-            Err(error) => Result::Err(DbError::from(error)),
-            Ok(inode) => Result::Ok(inode as Inode),
-        }
-    }
-}
-
 impl SqliteDb {
     pub fn new(db: RwLock<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
         ensure_schema(&db)?;
+        ensure_schema_next_inode(&db)?;
         Result::Ok(SqliteDb { db })
     }
 
@@ -537,7 +485,100 @@ mod test {
     }
 
     #[test]
-    fn sqlitedb_next_inode() {
+    fn sqlitedb_upsert_media_item() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        // Assert DB is empty
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 0);
+
+        // Test insert
+        let inode = db
+            .upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
+            .unwrap();
+        assert_eq!(inode, 101);
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 1);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+
+        // Test insert a second
+        let inode = db
+            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
+            .unwrap();
+        assert_eq!(inode, 102);
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 2);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+        assert_eq!(media_items[1].google_id(), "GoogleId2");
+
+        // Test upsert
+        let inode = db
+            .upsert_media_item(
+                &String::from("GoogleId1"),
+                &String::from("Title 1 new title"),
+                &now,
+            ).unwrap();
+        assert_eq!(inode, 103); // TODO: should be 101
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 2);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+        assert_eq!(media_items[0].name, "Title 1 new title");
+        assert_eq!(media_items[1].google_id(), "GoogleId2");
+    }
+
+    #[test]
+    fn sqlitedb_upsert_album() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        // Assert DB is empty
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 0);
+
+        // Test insert
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
+            .unwrap();
+        assert_eq!(inode, 101);
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+
+        // Test insert a second
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)
+            .unwrap();
+        assert_eq!(inode, 102);
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 2);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+        assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
+
+        // Test upsert
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum1", &"Album 1 new title", &now)
+            .unwrap();
+        assert_eq!(inode, 103); // TODO: should be 101
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 2);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+        assert_eq!(albums[0].name, "Album 1 new title");
+        assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
+    }
+
+    #[test]
+    fn sqlitedb_upsert_incroments_inode() {
         let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
@@ -545,18 +586,17 @@ mod test {
         let now = Utc::timestamp(&Utc, now_unix, 0);
 
         assert_eq!(db.get_and_update_inode().unwrap(), 101);
-        assert_eq!(db.get_and_update_inode().unwrap(), 102);
         assert_eq!(
             db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now,)
                 .unwrap(),
-            103
+            102
         );
         assert_eq!(
             db.upsert_album(&String::from("GoogleId2"), &String::from("Album 1"), &now,)
                 .unwrap(),
-            104
+            103
         );
-        assert_eq!(db.get_and_update_inode().unwrap(), 105);
+        assert_eq!(db.get_and_update_inode().unwrap(), 104);
     }
 
     #[test]
@@ -616,101 +656,162 @@ mod test {
     }
 
     #[test]
-    fn table_name_string() {
-        assert_eq!(
-            format!("{}", TableName::AlbumsAndMediaItems),
-            "albums_and_media_item"
-        );
-        assert_eq!(
-            format!("{:?}", TableName::AlbumsAndMediaItems),
-            "AlbumsAndMediaItems"
-        );
-        assert_eq!(format!("{}", TableName::NextInode), "next_inode");
-        assert_eq!(format!("{:?}", TableName::NextInode), "NextInode");
-        assert_eq!(
-            format!("{}", TableName::MediaItemsInAlbum),
-            "media_items_in_album"
-        );
-        assert_eq!(
-            format!("{:?}", TableName::MediaItemsInAlbum),
-            "MediaItemsInAlbum"
-        );
-    }
-
-    /*
-    #[test]
-    fn sqlitedb_inode_children() {
-        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
+    fn sqlitedb_media_items() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
-        db.insert(1, 1, String::from("")).unwrap();
-        db.insert(2, 1, String::from("test_file.txt")).unwrap();
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
-        db.insert(3, 1, String::from("dir1")).unwrap();
-        db.insert(4, 3, String::from("file_in_dir_1")).unwrap();
+        // Assert DB is empty
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 0);
 
-        assert_eq!(db.children(1).unwrap(), set_of_inodes(&[1, 2, 3]));
-        assert_eq!(db.children(2).unwrap(), set_of_inodes(&[]));
+        // Test insert
+        db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
+            .unwrap();
 
-        assert_eq!(db.children(3).unwrap(), set_of_inodes(&[4]));
-        assert_eq!(db.children(4).unwrap(), set_of_inodes(&[]));
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 1);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+
+        // Test insert a second
+        let inode = db
+            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
+            .unwrap();
+        assert_eq!(inode, 102);
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 2);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+        assert_eq!(media_items[1].google_id(), "GoogleId2");
     }
 
     #[test]
-    fn sqlitedb_inode_inode() {
-        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
+    fn sqlitedb_albums() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
-        db.insert(1, 1, String::from("")).unwrap();
-        db.insert(2, 1, String::from("test_file.txt")).unwrap();
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
-        db.insert(3, 1, String::from("dir1")).unwrap();
-        db.insert(4, 3, String::from("file_in_dir_1")).unwrap();
+        // Assert DB is empty
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 0);
 
-        assert_eq!(db.inode(1, String::from("")).unwrap().unwrap(), 1);
+        // Test insert
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
+            .unwrap();
+        assert_eq!(inode, 101);
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+
+        // Test insert a second
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)
+            .unwrap();
+        assert_eq!(inode, 102);
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 2);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+        assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
+    }
+
+    #[test]
+    fn sqlitedb_media_item_by_x() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        // Assert when DB is empty
+        assert!(db.media_item_by_inode(100).unwrap().is_none());
+        assert!(db.media_item_by_name("foo").unwrap().is_none());
+
+        // insert some data
+        let inode1 = db
+            .upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
+            .unwrap();
+        let inode2 = db
+            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
+            .unwrap();
+
+        // Lookup by name and inode are equal
+        let by_inode = db.media_item_by_inode(inode1).unwrap().unwrap();
+        let by_name = db.media_item_by_name("Title 1").unwrap().unwrap();
+        assert_eq!(by_inode.google_id(), "GoogleId1");
+        assert_eq!(by_inode, by_name);
+
+        // Lookup find the correct node
         assert_eq!(
-            db.inode(1, String::from("test_file.txt")).unwrap().unwrap(),
-            2
+            db.media_item_by_inode(inode1).unwrap().unwrap().google_id(),
+            "GoogleId1"
+        );
+        assert_eq!(
+            db.media_item_by_inode(inode2).unwrap().unwrap().google_id(),
+            "GoogleId2"
         );
 
-        assert_eq!(db.inode(1, String::from("dir1")).unwrap().unwrap(), 3);
         assert_eq!(
-            db.inode(3, String::from("file_in_dir_1")).unwrap().unwrap(),
-            4
-        );
-
-        assert!(
-            db.inode(1, String::from("not_a_file_in_dir.txt"))
+            db.media_item_by_name("Title 1")
                 .unwrap()
-                .is_none()
-        );
-        assert!(
-            db.inode(10, String::from("not_a_real_inode"))
                 .unwrap()
-                .is_none()
+                .google_id(),
+            "GoogleId1"
+        );
+        assert_eq!(
+            db.media_item_by_name("Title 2")
+                .unwrap()
+                .unwrap()
+                .google_id(),
+            "GoogleId2"
         );
     }
 
     #[test]
-    fn sqlitedb_inode_new_inode() {
-        let in_mem_db = rusqlite::Connection::open_in_memory().unwrap();
+    fn sqlitedb_album_by_x() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
-        assert_eq!(db.new_inode().unwrap(), 1);
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
-        db.insert(1, 1, String::from("")).unwrap();
-        assert_eq!(db.new_inode().unwrap(), 2);
+        // Assert when DB is empty
+        assert!(db.album_by_inode(100).unwrap().is_none());
+        assert!(db.album_by_name("foo").unwrap().is_none());
 
-        db.insert(2, 1, String::from("test_file.txt")).unwrap();
-        assert_eq!(db.new_inode().unwrap(), 3);
+        // insert some data
+        let inode1 = db
+            .upsert_album(&String::from("GoogleId1"), &String::from("Album 1"), &now)
+            .unwrap();
+        let inode2 = db
+            .upsert_album(&String::from("GoogleId2"), &String::from("Album 2"), &now)
+            .unwrap();
+
+        // Lookup by name and inode are equal
+        let by_inode = db.album_by_inode(inode1).unwrap().unwrap();
+        let by_name = db.album_by_name("Album 1").unwrap().unwrap();
+        assert_eq!(by_inode.google_id(), "GoogleId1");
+        assert_eq!(by_inode, by_name);
+
+        // Lookup find the correct node
+        assert_eq!(
+            db.album_by_inode(inode1).unwrap().unwrap().google_id(),
+            "GoogleId1"
+        );
+        assert_eq!(
+            db.album_by_inode(inode2).unwrap().unwrap().google_id(),
+            "GoogleId2"
+        );
+
+        assert_eq!(
+            db.album_by_name("Album 1").unwrap().unwrap().google_id(),
+            "GoogleId1"
+        );
+        assert_eq!(
+            db.album_by_name("Album 2").unwrap().unwrap().google_id(),
+            "GoogleId2"
+        );
     }
-
-    fn set_of_inodes(inodes: &[u64]) -> HashSet<u64> {
-        let mut set: HashSet<u64> = HashSet::new();
-        for inode in inodes {
-            set.insert(*inode);
-        }
-        set
-    }
-*/
 }

@@ -20,3 +20,16 @@ impl<T> From<sync::PoisonError<T>> for DbError {
         DbError::LockingError
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn db_error_from_rusqlite() {
+        match DbError::from(rusqlite::Error::SqliteSingleThreadedMode) {
+            DbError::SqlError(_) => assert!(true),
+            _ => assert!(false),
+        }
+    }
+}
