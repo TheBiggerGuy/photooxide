@@ -17,7 +17,7 @@ env_logger = "*"
 libc = "*"
 log = "*"
 chrono = "0.4"
-users = "0.7"
+users = "0.8"
 scheduled-executor = "0.4"
 
 [dependencies.rusqlite]
