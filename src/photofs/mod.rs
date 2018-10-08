@@ -12,7 +12,7 @@ use rust_filesystem::{
 };
 
 use db::PhotoDbRo;
-use domain::{MediaTypes, PhotoDbAlbum};
+use domain::{Inode, MediaTypes, PhotoDbAlbum};
 use photolib::*;
 use rust_filesystem::{RustFilesystem, UniqRequest};
 
@@ -33,6 +33,18 @@ const HELLO_TXT_CONTENT: &[u8] = b"Hello World!\n";
 
 const GENERATION: u64 = 0;
 
+#[derive(Debug)]
+struct ReadFhEntry {
+    inode: Inode,
+    data: Vec<u8>,
+}
+
+impl ReadFhEntry {
+    fn new(inode: Inode, data: Vec<u8>) -> ReadFhEntry {
+        ReadFhEntry { inode, data }
+    }
+}
+
 pub struct PhotoFs<X, Y>
 where
     X: RemotePhotoLibData,
@@ -40,7 +52,7 @@ where
 {
     photo_lib: Arc<Mutex<X>>,
     photo_db: Arc<Y>,
-    open_files: HashMap<u64, Vec<u8>>,
+    open_files: HashMap<u64, ReadFhEntry>,
     open_dirs: HashMap<u64, Vec<(u64, fuse::FileType, String)>>,
 }
 
@@ -365,7 +377,7 @@ where
             }
         }
 
-        self.open_files.insert(fh, file_data);
+        self.open_files.insert(fh, ReadFhEntry::new(ino, file_data));
         Result::Ok(OpenResponse {
             fh,
             flags: fuse::consts::FOPEN_DIRECT_IO,
@@ -385,8 +397,13 @@ where
 
         match self.open_files.get(&fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
-            Some(data) => {
-                let data_len = data.len();
+            Some(entry) => {
+                if entry.inode != ino {
+                    error!("Read file handle found entry for a different inode");
+                    return Result::Err(FuseError::FunctionNotImplemented);
+                }
+
+                let data_len = entry.data.len();
                 if offset >= data_len {
                     warn!(
                         "Attempt to read past end of file: file_size={} offset={}",
@@ -396,7 +413,7 @@ where
                 }
                 let slice_end: usize = usize::min(offset as usize + size as usize, data_len);
                 Result::Ok(ReadResponse {
-                    data: &data[offset as usize..slice_end],
+                    data: &entry.data[offset as usize..slice_end],
                 })
             }
         }
@@ -584,7 +601,7 @@ mod test {
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 0, 13)
                 .unwrap();
 
             assert_eq!(response.data, b"Hello World!\n");
@@ -615,28 +632,28 @@ mod test {
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 0, 13)
                 .unwrap();
             assert_eq!(response.data, b"Hello World!\n");
         }
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 1, 12)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 1, 12)
                 .unwrap();
             assert_eq!(response.data, b"ello World!\n");
         }
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 12, 1)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 12, 1)
                 .unwrap();
             assert_eq!(response.data, b"\n");
         }
 
         {
             assert!(
-                fs.read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 13, 1)
+                fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 13, 1)
                     .is_err()
             );
         }
@@ -654,21 +671,21 @@ mod test {
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 13)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 13)
                 .unwrap();
             assert_eq!(response.data, b"Hello World!\n");
         }
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 5)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 5)
                 .unwrap();
             assert_eq!(response.data, b"Hello");
         }
 
         {
             let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 15)
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 15)
                 .unwrap();
             assert_eq!(response.data, b"Hello World!\n");
             assert_eq!(open.flags, 1); // assert direct IO or the response should be zero padded
@@ -696,11 +713,24 @@ mod test {
                 .unwrap();
         }
 
-        let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
-
+        // read real file
         {
+            let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
             let response = fs.read(&TestUniqRequest {}, inode, open.fh, 0, 5).unwrap();
             assert_eq!(response.data, b"ABC");
+        }
+
+        // read unknown inode or fh
+        {
+            let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
+            assert!(
+                fs.read(&TestUniqRequest {}, inode + 1, open.fh, 0, 5)
+                    .is_err()
+            );
+            assert!(
+                fs.read(&TestUniqRequest {}, inode, open.fh + 1, 0, 5)
+                    .is_err()
+            );
         }
     }
 
