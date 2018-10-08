@@ -1,5 +1,4 @@
 use std::convert::From;
-use std::fmt;
 use std::option::Option;
 use std::result::Result;
 use std::sync::RwLock;
@@ -15,26 +14,12 @@ use domain::{
 mod error;
 pub use self::error::DbError;
 
-#[derive(Debug)]
-enum TableName {
-    AlbumsAndMediaItems,
-    NextInode,
-    MediaItemsInAlbum,
-}
+mod inode_db;
+use self::inode_db::ensure_schema_next_inode;
+pub use self::inode_db::NextInodeDb;
 
-impl fmt::Display for TableName {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            TableName::AlbumsAndMediaItems => write!(f, "albums_and_media_item"),
-            TableName::NextInode => write!(f, "next_inode"),
-            TableName::MediaItemsInAlbum => write!(f, "media_items_in_album"),
-        }
-    }
-}
-
-pub trait NextInodeDb: Sized {
-    fn get_and_update_inode(&self) -> Result<Inode, DbError>;
-}
+mod table_name;
+use self::table_name::TableName;
 
 pub trait PhotoDbRo: Sized {
     // Listings
@@ -106,24 +91,6 @@ fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
             "CREATE INDEX IF NOT EXISTS '{}_by_name' ON '{}' (name);",
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
-        ),
-        &[],
-    )?;
-
-    // NextInode
-    // inodes under 100 are for "special" nodes like the "albums" folder
-    // these are not stored in the DB as it would just mirror code.
-    db.execute(
-        &format!(
-            "CREATE TABLE IF NOT EXISTS '{}' (inode INTEGER NOT NULL);",
-            TableName::NextInode
-        ),
-        &[],
-    )?;
-    db.execute(
-        &format!(
-            "INSERT OR IGNORE INTO '{}' (inode) VALUES (100);",
-            TableName::NextInode
         ),
         &[],
     )?;
@@ -368,29 +335,10 @@ impl PhotoDb for SqliteDb {
     }
 }
 
-impl NextInodeDb for SqliteDb {
-    // TODO: Fix locking
-    fn get_and_update_inode(&self) -> Result<Inode, DbError> {
-        let db = self.db.write()?;
-        db.execute(
-            &format!("UPDATE '{}' SET inode = inode + 1;", TableName::NextInode),
-            &[],
-        )?;
-        let result: Result<i64, rusqlite::Error> = db.query_row(
-            &format!("SELECT inode FROM '{}';", TableName::NextInode),
-            &[],
-            |row| row.get(0),
-        );
-        match result {
-            Err(error) => Result::Err(DbError::from(error)),
-            Ok(inode) => Result::Ok(inode as Inode),
-        }
-    }
-}
-
 impl SqliteDb {
     pub fn new(db: RwLock<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
         ensure_schema(&db)?;
+        ensure_schema_next_inode(&db)?;
         Result::Ok(SqliteDb { db })
     }
 
@@ -537,7 +485,7 @@ mod test {
     }
 
     #[test]
-    fn sqlitedb_next_inode() {
+    fn sqlitedb_upsert_incroments_inode() {
         let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
@@ -545,18 +493,17 @@ mod test {
         let now = Utc::timestamp(&Utc, now_unix, 0);
 
         assert_eq!(db.get_and_update_inode().unwrap(), 101);
-        assert_eq!(db.get_and_update_inode().unwrap(), 102);
         assert_eq!(
             db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now,)
                 .unwrap(),
-            103
+            102
         );
         assert_eq!(
             db.upsert_album(&String::from("GoogleId2"), &String::from("Album 1"), &now,)
                 .unwrap(),
-            104
+            103
         );
-        assert_eq!(db.get_and_update_inode().unwrap(), 105);
+        assert_eq!(db.get_and_update_inode().unwrap(), 104);
     }
 
     #[test]
@@ -612,28 +559,6 @@ mod test {
         assert!(
             db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem3")
                 .is_err()
-        );
-    }
-
-    #[test]
-    fn table_name_string() {
-        assert_eq!(
-            format!("{}", TableName::AlbumsAndMediaItems),
-            "albums_and_media_item"
-        );
-        assert_eq!(
-            format!("{:?}", TableName::AlbumsAndMediaItems),
-            "AlbumsAndMediaItems"
-        );
-        assert_eq!(format!("{}", TableName::NextInode), "next_inode");
-        assert_eq!(format!("{:?}", TableName::NextInode), "NextInode");
-        assert_eq!(
-            format!("{}", TableName::MediaItemsInAlbum),
-            "media_items_in_album"
-        );
-        assert_eq!(
-            format!("{:?}", TableName::MediaItemsInAlbum),
-            "MediaItemsInAlbum"
         );
     }
 
