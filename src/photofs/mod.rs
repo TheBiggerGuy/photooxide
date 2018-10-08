@@ -45,6 +45,18 @@ impl ReadFhEntry {
     }
 }
 
+#[derive(Debug)]
+struct ReadDirFhEntry {
+    inode: Inode,
+    entries: Vec<(u64, fuse::FileType, String)>,
+}
+
+impl ReadDirFhEntry {
+    fn new(inode: Inode, entries: Vec<(u64, fuse::FileType, String)>) -> ReadDirFhEntry {
+        ReadDirFhEntry { inode, entries }
+    }
+}
+
 pub struct PhotoFs<X, Y>
 where
     X: RemotePhotoLibData,
@@ -53,7 +65,7 @@ where
     photo_lib: Arc<Mutex<X>>,
     photo_db: Arc<Y>,
     open_files: HashMap<u64, ReadFhEntry>,
-    open_dirs: HashMap<u64, Vec<(u64, fuse::FileType, String)>>,
+    open_dirs: HashMap<u64, ReadDirFhEntry>,
 }
 
 impl<X, Y> PhotoFs<X, Y>
@@ -472,7 +484,7 @@ where
             }
         }
 
-        self.open_dirs.insert(fh, entries);
+        self.open_dirs.insert(fh, ReadDirFhEntry::new(ino, entries));
         Result::Ok(OpenResponse { fh, flags: 0 }) // TODO: Flags
     }
 
@@ -485,17 +497,21 @@ where
     ) -> FuseResult<ReadDirResponse> {
         debug!("FS readdir: ino={}, offset={}", ino, offset);
 
-        let dir_context_option = self.open_dirs.get(&fh);
-        if dir_context_option.is_none() {
+        let fh_entry = match self.open_dirs.get(&fh) {
+            None => return Result::Err(FuseError::FunctionNotImplemented),
+            Some(entry) => entry,
+        };
+
+        if fh_entry.inode != ino {
+            error!("Read dir handle found entry for a different inode");
             return Result::Err(FuseError::FunctionNotImplemented);
         }
-        let entries = dir_context_option.unwrap();
 
         // TODO: Error when not known inode
         // reply.error(ENOENT);
 
         let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
-        let result_entries: Vec<ReadDirEntry> = entries
+        let result_entries: Vec<ReadDirEntry> = (&fh_entry.entries)
             .into_iter()
             .enumerate()
             .skip(to_skip)
@@ -812,6 +828,31 @@ mod test {
         assert_eq!(response.entries[1].ino, FIXED_INODE_ALBUMS);
         assert_eq!(response.entries[2].ino, FIXED_INODE_MEDIA);
         assert_eq!(response.entries[3].ino, FIXED_INODE_HELLO_WORLD);
+    }
+
+    #[test]
+    fn readdir_invalid_inode_or_fh() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap()
+            .fh;
+
+        {
+            assert!(
+                fs.readdir(&TestUniqRequest {}, FIXED_INODE_ROOT + 1, fh, 0)
+                    .is_err()
+            );
+        }
+        {
+            assert!(
+                fs.readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh + 1, 0)
+                    .is_err()
+            );
+        }
     }
 
     #[test]
