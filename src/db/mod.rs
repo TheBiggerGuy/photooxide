@@ -167,7 +167,7 @@ impl PhotoDbRo for SqliteDb {
     fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError> {
         let db = self.db.read()?;
         let mut statment = db.prepare(&format!(
-            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}';",
+            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
             MediaTypes::MediaItem
         ))?;
@@ -184,7 +184,7 @@ impl PhotoDbRo for SqliteDb {
     fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError> {
         let db = self.db.read()?;
         let mut statment = db.prepare(&format!(
-            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}';",
+            "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
             MediaTypes::Album
         ))?;
@@ -203,7 +203,7 @@ impl PhotoDbRo for SqliteDb {
         let mut statment = db.prepare(&format!(
             "SELECT google_id, type, name, last_remote_check, inode
             FROM '{}' INNER JOIN '{}' ON '{}'.google_id = '{}'.media_item_google_id
-            WHERE type = '{}' AND album_google_id = (SELECT google_id FROM {} WHERE inode = ?);",
+            WHERE type = '{}' AND album_google_id = (SELECT google_id FROM {} WHERE inode = ?) ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
             TableName::MediaItemsInAlbum,
             TableName::AlbumsAndMediaItems,
@@ -482,6 +482,99 @@ mod test {
             db.last_updated_album().unwrap().unwrap(),
             now_earlier_earlier
         );
+    }
+
+    #[test]
+    fn sqlitedb_upsert_media_item() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        // Assert DB is empty
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 0);
+
+        // Test insert
+        let inode = db
+            .upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
+            .unwrap();
+        assert_eq!(inode, 101);
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 1);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+
+        // Test insert a second
+        let inode = db
+            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
+            .unwrap();
+        assert_eq!(inode, 102);
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 2);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+        assert_eq!(media_items[1].google_id(), "GoogleId2");
+
+        // Test upsert
+        let inode = db
+            .upsert_media_item(
+                &String::from("GoogleId1"),
+                &String::from("Title 1 new title"),
+                &now,
+            ).unwrap();
+        assert_eq!(inode, 103); // TODO: should be 101
+
+        let media_items = db.media_items().unwrap();
+        assert_eq!(media_items.len(), 2);
+        assert_eq!(media_items[0].google_id(), "GoogleId1");
+        assert_eq!(media_items[0].name, "Title 1 new title");
+        assert_eq!(media_items[1].google_id(), "GoogleId2");
+    }
+
+    #[test]
+    fn sqlitedb_upsert_album() {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        // Assert DB is empty
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 0);
+
+        // Test insert
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
+            .unwrap();
+        assert_eq!(inode, 101);
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+
+        // Test insert a second
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)
+            .unwrap();
+        assert_eq!(inode, 102);
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 2);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+        assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
+
+        // Test upsert
+        let inode = db
+            .upsert_album(&"GoogleIdAlbum1", &"Album 1 new title", &now)
+            .unwrap();
+        assert_eq!(inode, 103); // TODO: should be 101
+
+        let albums = db.albums().unwrap();
+        assert_eq!(albums.len(), 2);
+        assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
+        assert_eq!(albums[0].name, "Album 1 new title");
+        assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
     }
 
     #[test]
