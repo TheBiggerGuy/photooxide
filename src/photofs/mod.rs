@@ -1,28 +1,26 @@
-extern crate fuse;
-extern crate libc;
-extern crate time;
-
-extern crate rusqlite;
-
-extern crate users;
-
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
+
+use fuse::{self, FileType};
+use time::Timespec;
 
 use rust_filesystem::{
     FileAttrResponse, FileEntryResponse, FuseError, FuseResult, OpenResponse, ReadDirEntry,
     ReadDirResponse, ReadResponse,
 };
 
-use db::{DbError, PhotoDbRo};
-use domain::{Inode, MediaTypes, PhotoDbAlbum};
+use db::PhotoDbRo;
+use domain::{MediaTypes, PhotoDbAlbum};
 use photolib::*;
 use rust_filesystem::{RustFilesystem, UniqRequest};
 
-use fuse::{FileAttr, FileType};
-use time::Timespec;
+mod error;
+pub use self::error::PhotoFsError;
+
+mod utils;
+use self::utils::make_atr;
 
 const FIXED_INODE_ROOT: u64 = fuse::FUSE_ROOT_ID;
 const FIXED_INODE_ALBUMS: u64 = 2;
@@ -31,48 +29,9 @@ const FIXED_INODE_HELLO_WORLD: u64 = 4;
 
 const TTL: Timespec = Timespec { sec: 120, nsec: 0 }; // 2 minutes
 
-const CREATE_TIME: Timespec = Timespec {
-    sec: 1_381_237_736,
-    nsec: 0,
-}; // 2013-10-08 08:56
-
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
+const HELLO_TXT_CONTENT: &[u8] = b"Hello World!\n";
 
 const GENERATION: u64 = 0;
-
-fn make_atr(inode: Inode, size: usize, file_type: FileType) -> FileAttr {
-    FileAttr {
-        ino: inode,
-        size: size as u64,
-        blocks: 1,
-        atime: CREATE_TIME,
-        mtime: CREATE_TIME,
-        ctime: CREATE_TIME,
-        crtime: CREATE_TIME,
-        kind: file_type,
-        perm: 0o644,
-        nlink: 1,
-        uid: users::get_current_uid(),
-        gid: 20,
-        rdev: 0,
-        flags: 0,
-    }
-}
-
-#[derive(Debug)]
-pub enum PhotoFsError {
-    SqlError(rusqlite::Error),
-    LockingError,
-}
-
-impl From<DbError> for PhotoFsError {
-    fn from(error: DbError) -> Self {
-        match error {
-            DbError::SqlError(sql_error) => PhotoFsError::SqlError(sql_error),
-            DbError::LockingError => PhotoFsError::LockingError,
-        }
-    }
-}
 
 pub struct PhotoFs<X, Y>
 where
@@ -365,7 +324,7 @@ where
 
         let file_data: Vec<u8>;
         if ino == FIXED_INODE_HELLO_WORLD {
-            file_data = String::from(HELLO_TXT_CONTENT).into_bytes();
+            file_data = HELLO_TXT_CONTENT.to_vec();
         } else {
             match self.photo_db.media_item_by_inode(ino) {
                 Err(error) => {
@@ -421,12 +380,21 @@ where
         offset: i64,
         size: u32,
     ) -> FuseResult<ReadResponse> {
+        let offset = offset as usize;
         debug!("FS read: ino={}, offset={} size={}", ino, offset, size);
 
         match self.open_files.get(&fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(data) => {
-                let slice_end: usize = usize::min((offset as usize) + (size as usize), data.len());
+                let data_len = data.len();
+                if offset >= data_len {
+                    warn!(
+                        "Attempt to read past end of file: file_size={} offset={}",
+                        data_len, offset
+                    );
+                    return Result::Err(FuseError::FunctionNotImplemented);
+                }
+                let slice_end: usize = usize::min(offset as usize + size as usize, data_len);
                 Result::Ok(ReadResponse {
                     data: &data[offset as usize..slice_end],
                 })
@@ -543,29 +511,201 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use domain::GoogleId;
-    use domain::PhotoDbMediaItem;
-    use domain::PhotoDbMediaItemAlbum;
-    use domain::UtcDateTime;
+
     use hyper;
 
+    use domain::{GoogleId, Inode, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime};
+
+    use db::DbError;
+
     #[test]
-    fn make_atr_test() {
-        // Inode
-        assert_eq!(make_atr(100, 0, FileType::RegularFile).ino, 100);
+    fn lookup_root() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
 
-        // Size
-        assert_eq!(make_atr(100, 1, FileType::RegularFile).size, 1);
+        {
+            assert!(
+                fs.lookup(
+                    &TestUniqRequest {},
+                    FIXED_INODE_ROOT,
+                    OsStr::new("not_in_root")
+                ).is_err()
+            );
+        }
 
-        // FileType
-        assert_eq!(
-            make_atr(100, 1, FileType::RegularFile).kind,
-            FileType::RegularFile
+        {
+            let response = fs
+                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("albums"))
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        {
+            let response = fs
+                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("media"))
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        {
+            let response = fs
+                .lookup(
+                    &TestUniqRequest {},
+                    FIXED_INODE_ROOT,
+                    OsStr::new("hello.txt"),
+                ).unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+    }
+
+    #[test]
+    fn open_read_release_hello_txt() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
+            .unwrap()
+            .fh;
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
+                .unwrap();
+
+            assert_eq!(response.data, b"Hello World!\n");
+        }
+
+        assert!(
+            fs.release(
+                &TestUniqRequest {},
+                FIXED_INODE_HELLO_WORLD,
+                fh,
+                0,
+                0,
+                false
+            ).is_ok()
         );
-        assert_eq!(
-            make_atr(100, 1, FileType::Directory).kind,
-            FileType::Directory
-        );
+    }
+
+    #[test]
+    fn read_offset() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
+            .unwrap()
+            .fh;
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0, 13)
+                .unwrap();
+            assert_eq!(response.data, b"Hello World!\n");
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 1, 12)
+                .unwrap();
+            assert_eq!(response.data, b"ello World!\n");
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 12, 1)
+                .unwrap();
+            assert_eq!(response.data, b"\n");
+        }
+
+        {
+            assert!(
+                fs.read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 13, 1)
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn read_size() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let open = fs
+            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
+            .unwrap();
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 13)
+                .unwrap();
+            assert_eq!(response.data, b"Hello World!\n");
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 5)
+                .unwrap();
+            assert_eq!(response.data, b"Hello");
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, open.fh, 0, 15)
+                .unwrap();
+            assert_eq!(response.data, b"Hello World!\n");
+            assert_eq!(open.flags, 1); // assert direct IO or the response should be zero padded
+        }
+    }
+
+    #[test]
+    fn opendir_multiple_calls() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let response1 = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap();
+        let response2 = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap();
+
+        assert_eq!(response1.fh, FIXED_INODE_ROOT);
+        assert_eq!(response2.fh, FIXED_INODE_ROOT + 1);
+    }
+
+    #[test]
+    fn readdir_root() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib {}));
+        let photo_db = Arc::new(TestPhotoDb {});
+        let mut fs = PhotoFs::new(photo_lib, photo_db);
+
+        let fh = fs
+            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
+            .unwrap()
+            .fh;
+
+        let response = fs
+            .readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
+            .unwrap();
+
+        assert_eq!(response.entries.len(), 4);
+        assert_eq!(response.entries[0].ino, FIXED_INODE_ROOT);
+        assert_eq!(response.entries[1].ino, FIXED_INODE_ALBUMS);
+        assert_eq!(response.entries[2].ino, FIXED_INODE_MEDIA);
+        assert_eq!(response.entries[3].ino, FIXED_INODE_HELLO_WORLD);
     }
 
     #[test]

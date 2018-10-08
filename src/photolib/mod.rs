@@ -1,48 +1,17 @@
-extern crate google_photoslibrary1 as photoslibrary1;
-extern crate hyper;
-extern crate yup_oauth2 as oauth2;
-
-extern crate rusqlite;
-
-extern crate chrono;
-extern crate time;
-
-use std;
 use std::borrow::BorrowMut;
 use std::convert::From;
 use std::io::Read;
 use std::option::Option;
 use std::result::Result;
 
+use hyper;
+use oauth2;
 use photoslibrary1::{PhotosLibrary, SearchMediaItemsRequest};
 
 use domain::*;
 
-#[derive(Debug)]
-pub enum RemotePhotoLibError {
-    GoogleBackendError(photoslibrary1::Error),
-    HttpClientError(hyper::error::Error),
-    HttpApiError(hyper::status::StatusCode),
-    IoError(std::io::Error),
-}
-
-impl From<std::io::Error> for RemotePhotoLibError {
-    fn from(error: std::io::Error) -> RemotePhotoLibError {
-        RemotePhotoLibError::IoError(error)
-    }
-}
-
-impl From<hyper::error::Error> for RemotePhotoLibError {
-    fn from(error: hyper::error::Error) -> RemotePhotoLibError {
-        RemotePhotoLibError::HttpClientError(error)
-    }
-}
-
-impl From<photoslibrary1::Error> for RemotePhotoLibError {
-    fn from(error: photoslibrary1::Error) -> RemotePhotoLibError {
-        RemotePhotoLibError::GoogleBackendError(error)
-    }
-}
+mod error;
+pub use self::error::RemotePhotoLibError;
 
 #[derive(Debug)]
 pub struct ItemListing {
