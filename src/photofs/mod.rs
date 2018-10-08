@@ -380,12 +380,21 @@ where
         offset: i64,
         size: u32,
     ) -> FuseResult<ReadResponse> {
+        let offset = offset as usize;
         debug!("FS read: ino={}, offset={} size={}", ino, offset, size);
 
         match self.open_files.get(&fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(data) => {
-                let slice_end: usize = usize::min((offset as usize) + (size as usize), data.len());
+                let data_len = data.len();
+                if offset >= data_len {
+                    warn!(
+                        "Attempt to read past end of file: file_size={} offset={}",
+                        data_len, offset
+                    );
+                    return Result::Err(FuseError::FunctionNotImplemented);
+                }
+                let slice_end: usize = usize::min(offset as usize + size as usize, data_len);
                 Result::Ok(ReadResponse {
                     data: &data[offset as usize..slice_end],
                 })
@@ -610,6 +619,20 @@ mod test {
                 .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 1, 12)
                 .unwrap();
             assert_eq!(response.data, b"ello World!\n");
+        }
+
+        {
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 12, 1)
+                .unwrap();
+            assert_eq!(response.data, b"\n");
+        }
+
+        {
+            assert!(
+                fs.read(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 13, 1)
+                    .is_err()
+            );
         }
     }
 
