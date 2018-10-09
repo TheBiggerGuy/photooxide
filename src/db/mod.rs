@@ -26,6 +26,7 @@ pub trait PhotoDbRo: Sized {
     fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError>;
     fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError>;
     fn media_items_in_album(&self, inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError>;
+    fn media_items_in_album_length(&self, inode: Inode) -> Result<usize, DbError>;
 
     // Single items
     fn media_item_by_name(&self, name: &str) -> Result<Option<PhotoDbMediaItem>, DbError>;
@@ -219,6 +220,11 @@ impl PhotoDbRo for SqliteDb {
             media_items.push(media_item);
         }
         Result::Ok(media_items)
+    }
+
+    fn media_items_in_album_length(&self, inode: Inode) -> Result<usize, DbError> {
+        self.media_items_in_album(inode)
+            .map(|media_items| media_items.len()) // TODO: Custom SQL
     }
 
     fn media_item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError> {
