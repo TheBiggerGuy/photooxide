@@ -646,6 +646,49 @@ mod test {
     }
 
     #[test]
+    fn getattr_dynamic() {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+        let media_item_inode = photo_db
+            .upsert_media_item("GoogleId1", "Photo1.jpg", &now)
+            .unwrap();
+        let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
+
+        {
+            let response = fs.getattr(&TestUniqRequest {}, media_item_inode).unwrap();
+
+            assert_eq!(response.attr.ino, media_item_inode);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+            assert_eq!(response.attr.size, 0);
+        }
+
+        {
+            let response = fs.getattr(&TestUniqRequest {}, album_inode).unwrap();
+
+            assert_eq!(response.attr.ino, album_inode);
+            assert_eq!(response.attr.kind, FileType::Directory);
+            assert_eq!(response.attr.size, 0);
+        }
+
+        {
+            assert!(fs.getattr(&TestUniqRequest {}, album_inode + 1).is_err());
+        }
+
+        photo_db
+            .upsert_media_item_in_album("GoogleId2", "GoogleId1")
+            .unwrap();
+
+        {
+            let response = fs.getattr(&TestUniqRequest {}, album_inode).unwrap();
+
+            assert_eq!(response.attr.size, 0); // TODO: Should be 1
+        }
+    }
+
+    #[test]
     fn open_read_release_hello_txt() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = build_test_db();
