@@ -37,7 +37,11 @@ pub trait RemotePhotoLibMetaData: Sized {
 }
 
 pub trait RemotePhotoLibData: Sized {
-    fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError>;
+    fn media_item(
+        &self,
+        google_id: &GoogleId,
+        is_video: bool,
+    ) -> Result<Vec<u8>, RemotePhotoLibError>;
 }
 
 pub struct HttpRemotePhotoLib<C, A>
@@ -179,10 +183,18 @@ where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
 {
-    fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
+    fn media_item(
+        &self,
+        google_id: &GoogleId,
+        is_video: bool,
+    ) -> Result<Vec<u8>, RemotePhotoLibError> {
         let media_item = self.photos_library.media_items().get(&google_id).doit()?;
         let base_url = media_item.1.base_url.unwrap();
-        let download_url = format!("{}=d", base_url);
+        let download_url = if is_video {
+            format!("{}=dv", base_url)
+        } else {
+            format!("{}=d", base_url)
+        };
         info!("Have base_url={} download_url={} )", base_url, download_url);
 
         let mut http_response = self.data_http_client.get(&download_url).send()?;

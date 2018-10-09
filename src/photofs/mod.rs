@@ -34,6 +34,8 @@ const HELLO_TXT_CONTENT: &[u8] = b"Hello World!\n";
 
 const GENERATION: u64 = 0;
 
+const DEFAULT_MEDIA_ITEM_SIZE: usize = 1024;
+
 #[derive(Debug)]
 struct ReadFhEntry {
     inode: Inode,
@@ -156,7 +158,11 @@ where
         match self.photo_db.media_item_by_name(&String::from(name)) {
             Ok(Option::Some(media_item)) => Result::Ok(FileEntryResponse {
                 ttl: &TTL,
-                attr: make_atr(media_item.inode, 0, FileType::RegularFile),
+                attr: make_atr(
+                    media_item.inode,
+                    DEFAULT_MEDIA_ITEM_SIZE,
+                    FileType::RegularFile,
+                ),
                 generation: GENERATION,
             }),
             Ok(Option::None) => {
@@ -342,7 +348,7 @@ where
                         MediaTypes::Album => {
                             self.photo_db.media_items_in_album_length(item.inode)?
                         }
-                        MediaTypes::MediaItem => 0,
+                        MediaTypes::MediaItem => DEFAULT_MEDIA_ITEM_SIZE,
                     };
 
                     Result::Ok(FileAttrResponse {
@@ -375,7 +381,11 @@ where
                 }
                 Ok(Option::Some(media_item)) => {
                     let photo_lib = self.photo_lib.lock().unwrap();
-                    match photo_lib.media_item(media_item.google_id()) {
+                    let filename_lowercase = media_item.name.to_lowercase();
+                    let is_video = filename_lowercase.ends_with(".mp4")
+                        || filename_lowercase.ends_with(".mts")
+                        || filename_lowercase.ends_with(".avi"); // TODO: Use MIME Type
+                    match photo_lib.media_item(media_item.google_id(), is_video) {
                         Err(error) => {
                             error!(
                                 "FS open: Failed to fetch media item from remote: {:?}",
@@ -432,7 +442,7 @@ where
                         "Attempt to read past end of file: file_size={} offset={}",
                         data_len, offset
                     );
-                    return Result::Err(FuseError::FunctionNotImplemented);
+                    return Result::Ok(ReadResponse { data: &[] });
                 }
                 let slice_end: usize = usize::min(offset as usize + size as usize, data_len);
                 Result::Ok(ReadResponse {
@@ -673,7 +683,7 @@ mod test {
 
             assert_eq!(response.attr.ino, media_item_inode);
             assert_eq!(response.attr.kind, FileType::RegularFile);
-            assert_eq!(response.attr.size, 0);
+            assert_eq!(response.attr.size, 1024);
         }
 
         {
@@ -762,11 +772,12 @@ mod test {
             assert_eq!(response.data, b"\n");
         }
 
+        // Offset past the end of the file
         {
-            assert!(
-                fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 13, 1)
-                    .is_err()
-            );
+            let response = fs
+                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 13, 1)
+                .unwrap();
+            assert_eq!(response.data, b"");
         }
     }
 
@@ -964,7 +975,11 @@ mod test {
     }
 
     impl<'a> RemotePhotoLibData for TestRemotePhotoLib<'a> {
-        fn media_item(&self, google_id: &GoogleId) -> Result<Vec<u8>, RemotePhotoLibError> {
+        fn media_item(
+            &self,
+            google_id: &GoogleId,
+            _is_video: bool,
+        ) -> Result<Vec<u8>, RemotePhotoLibError> {
             match self.test_data.get(google_id) {
                 Some(data) => Result::Ok(data.clone()),
                 None => Result::Err(RemotePhotoLibError::HttpApiError(
