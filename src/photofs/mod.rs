@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::convert::From;
 use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
 
@@ -116,11 +117,14 @@ where
     fn lookup_albums(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
         let name = name.to_str().unwrap();
         match self.photo_db.album_by_name(&String::from(name)) {
-            Ok(Option::Some(album)) => Result::Ok(FileEntryResponse {
-                ttl: &TTL,
-                attr: make_atr(album.inode, 0, FileType::Directory),
-                generation: GENERATION,
-            }),
+            Ok(Option::Some(album)) => {
+                let size = self.photo_db.media_items_in_album_length(album.inode)?;
+                Result::Ok(FileEntryResponse {
+                    ttl: &TTL,
+                    attr: make_atr(album.inode, size, FileType::Directory),
+                    generation: GENERATION,
+                })
+            }
             Ok(Option::None) => {
                 warn!(
                     "lookup: Failed to find a FileAttr for name={:?} in albums",
@@ -334,9 +338,16 @@ where
                         MediaTypes::Album => FileType::Directory,
                         MediaTypes::MediaItem => FileType::RegularFile,
                     };
+                    let size = match item.media_type {
+                        MediaTypes::Album => {
+                            self.photo_db.media_items_in_album_length(item.inode)?
+                        }
+                        MediaTypes::MediaItem => 0,
+                    };
+
                     Result::Ok(FileAttrResponse {
                         ttl: &TTL,
-                        attr: make_atr(item.inode, 0, file_type),
+                        attr: make_atr(item.inode, size, file_type),
                     })
                 }
             },
@@ -684,7 +695,7 @@ mod test {
         {
             let response = fs.getattr(&TestUniqRequest {}, album_inode).unwrap();
 
-            assert_eq!(response.attr.size, 0); // TODO: Should be 1
+            assert_eq!(response.attr.size, 1);
         }
     }
 
