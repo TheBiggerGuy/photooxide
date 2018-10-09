@@ -52,21 +52,12 @@ pub trait RustFilesystem {
     fn releasedir(&mut self, req: &UniqRequest, ino: u64, fh: u64, flags: u32) -> FuseResult<()>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, new)]
 pub struct RustFilesystemReal<X>
 where
     X: RustFilesystem,
 {
     fs: X,
-}
-
-impl<X> RustFilesystemReal<X>
-where
-    X: RustFilesystem,
-{
-    pub fn new(fs: X) -> RustFilesystemReal<X> {
-        RustFilesystemReal { fs }
-    }
 }
 
 impl<X> Filesystem for RustFilesystemReal<X>

@@ -36,28 +36,16 @@ const GENERATION: u64 = 0;
 
 const DEFAULT_MEDIA_ITEM_SIZE: usize = 1024;
 
-#[derive(Debug)]
+#[derive(Debug, new)]
 struct ReadFhEntry {
     inode: Inode,
     data: Vec<u8>,
 }
 
-impl ReadFhEntry {
-    fn new(inode: Inode, data: Vec<u8>) -> ReadFhEntry {
-        ReadFhEntry { inode, data }
-    }
-}
-
-#[derive(Debug)]
+#[derive(Debug, new)]
 struct ReadDirFhEntry {
     inode: Inode,
     entries: Vec<(u64, fuse::FileType, String)>,
-}
-
-impl ReadDirFhEntry {
-    fn new(inode: Inode, entries: Vec<(u64, fuse::FileType, String)>) -> ReadDirFhEntry {
-        ReadDirFhEntry { inode, entries }
-    }
 }
 
 pub struct PhotoFs<X, Y>

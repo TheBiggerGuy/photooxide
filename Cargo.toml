@@ -19,6 +19,7 @@ log = "*"
 chrono = "0.4"
 users = "0.8"
 scheduled-executor = "0.4"
+derive-new = "0.5"
 
 [dependencies.rusqlite]
 version = "0.14.0"

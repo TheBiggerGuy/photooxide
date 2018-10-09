@@ -13,17 +13,13 @@ use domain::*;
 mod error;
 pub use self::error::RemotePhotoLibError;
 
-#[derive(Debug)]
+#[derive(Debug, new)]
 pub struct ItemListing {
     id: String,
     pub name: String,
 }
 
 impl ItemListing {
-    pub fn new(id: String, name: String) -> ItemListing {
-        ItemListing { id, name }
-    }
-
     pub fn google_id(&self) -> &GoogleId {
         &self.id
     }
