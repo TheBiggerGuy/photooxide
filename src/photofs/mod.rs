@@ -553,15 +553,15 @@ mod test {
 
     use chrono::{TimeZone, Utc};
 
-    use domain::{GoogleId, Inode, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime};
+    use domain::{GoogleId, Inode};
 
-    use db::{DbError, PhotoDb, SqliteDb};
+    use db::{PhotoDb, SqliteDb};
 
     #[test]
     fn lookup_root() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
             assert!(
@@ -607,8 +607,8 @@ mod test {
     #[test]
     fn getattr_static() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
             let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ROOT).unwrap();
@@ -648,8 +648,8 @@ mod test {
     #[test]
     fn open_read_release_hello_txt() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs
             .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
@@ -679,8 +679,8 @@ mod test {
     #[test]
     fn read_offset() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs
             .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
@@ -719,8 +719,8 @@ mod test {
     #[test]
     fn read_size() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let open = fs
             .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
@@ -752,10 +752,7 @@ mod test {
     #[test]
     fn read_media_item() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
-        let photo_db = Arc::new(SqliteDb::new(in_mem_db).unwrap());
-
+        let photo_db = build_test_db();
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let inode: Inode;
@@ -794,8 +791,8 @@ mod test {
     #[test]
     fn opendir_multiple_calls() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let response1 = fs
             .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
@@ -811,8 +808,8 @@ mod test {
     #[test]
     fn readdir_root() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs
             .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
@@ -833,8 +830,8 @@ mod test {
     #[test]
     fn readdir_invalid_inode_or_fh() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs
             .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
@@ -858,8 +855,8 @@ mod test {
     #[test]
     fn releasedir_no_previous_opendir() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         assert!(fs.releasedir(&TestUniqRequest {}, 1, 0, 0).is_err());
     }
@@ -867,8 +864,8 @@ mod test {
     #[test]
     fn releasedir_from_previous_opendir() {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(TestPhotoDb {});
-        let mut fs = PhotoFs::new(photo_lib, photo_db);
+        let photo_db = build_test_db();
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs
             .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
@@ -923,44 +920,8 @@ mod test {
         }
     }
 
-    #[derive(Debug)]
-    struct TestPhotoDb {}
-
-    impl PhotoDbRo for TestPhotoDb {
-        // Listings
-        fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn media_items_in_album(&self, _inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-
-        // Single items
-        fn media_item_by_name(&self, _name: &str) -> Result<Option<PhotoDbMediaItem>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn media_item_by_inode(&self, _inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn album_by_name(&self, _name: &str) -> Result<Option<PhotoDbAlbum>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn album_by_inode(&self, _inode: Inode) -> Result<Option<PhotoDbAlbum>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn item_by_inode(&self, _inode: Inode) -> Result<Option<PhotoDbMediaItemAlbum>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-
-        // Check staleness
-        fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
-        fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError> {
-            Result::Err(DbError::LockingError)
-        }
+    fn build_test_db() -> Arc<SqliteDb> {
+        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        Arc::new(SqliteDb::new(in_mem_db).unwrap())
     }
 }
