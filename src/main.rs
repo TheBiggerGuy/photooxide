@@ -24,6 +24,8 @@ extern crate users;
 
 extern crate scheduled_executor;
 
+extern crate futures;
+
 use std::env;
 use std::ffi::OsStr;
 use std::option::Option;
