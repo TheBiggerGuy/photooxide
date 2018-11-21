@@ -1,7 +1,9 @@
+use std::iter;
 use std::result::Result;
 use std::sync::Mutex;
 
 use rusqlite;
+use rusqlite::types::ToSql;
 
 use domain::Inode;
 
@@ -22,14 +24,14 @@ pub fn ensure_schema_next_inode(db: &Mutex<rusqlite::Connection>) -> Result<(), 
             "CREATE TABLE IF NOT EXISTS '{}' (inode INTEGER NOT NULL);",
             TableName::NextInode
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
     db.execute(
         &format!(
             "INSERT OR IGNORE INTO '{}' (inode) VALUES (100);",
             TableName::NextInode
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
 
     Result::Ok(())
@@ -41,11 +43,11 @@ impl NextInodeDb for SqliteDb {
         let db = self.db.lock()?;
         db.execute(
             &format!("UPDATE '{}' SET inode = inode + 1;", TableName::NextInode),
-            &[],
+            iter::empty::<&ToSql>(),
         )?;
         let result: Result<i64, rusqlite::Error> = db.query_row(
             &format!("SELECT inode FROM '{}';", TableName::NextInode),
-            &[],
+            iter::empty::<&ToSql>(),
             |row| row.get(0),
         );
         match result {

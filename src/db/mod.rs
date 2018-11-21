@@ -1,9 +1,11 @@
 use std::convert::From;
+use std::iter;
 use std::option::Option;
 use std::result::Result;
 use std::sync::Mutex;
 
 use rusqlite;
+use rusqlite::types::ToSql;
 
 use chrono::{TimeZone, Utc};
 
@@ -80,7 +82,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             );",
             TableName::AlbumsAndMediaItems
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -88,7 +90,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -96,7 +98,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
 
     // MediaItemsInAlbum
@@ -113,7 +115,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -121,7 +123,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::MediaItemsInAlbum,
             TableName::MediaItemsInAlbum
         ),
-        &[],
+        iter::empty::<&ToSql>(),
     )?;
 
     Result::Ok(())
@@ -175,7 +177,7 @@ impl PhotoDbRo for SqliteDb {
             TableName::AlbumsAndMediaItems,
             MediaTypes::MediaItem
         ))?;
-        let media_items_results = statment.query_map(&[], row_to_media_item)?;
+        let media_items_results = statment.query_map(iter::empty::<&ToSql>(), row_to_media_item)?;
 
         let mut media_items: Vec<PhotoDbMediaItem> = Vec::new();
         for media_item_result in media_items_results {
@@ -192,7 +194,7 @@ impl PhotoDbRo for SqliteDb {
             TableName::AlbumsAndMediaItems,
             MediaTypes::Album
         ))?;
-        let media_items_results = statment.query_map(&[], row_to_album)?;
+        let media_items_results = statment.query_map(iter::empty::<&ToSql>(), row_to_album)?;
 
         let mut media_items: Vec<PhotoDbAlbum> = Vec::new();
         for media_item_result in media_items_results {
@@ -392,7 +394,7 @@ impl SqliteDb {
         let last_modified_time = last_modified_time.timestamp();
         self.db.lock()?.execute(
             &format!("INSERT OR REPLACE INTO '{}' (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TableName::AlbumsAndMediaItems),
-            &[&id, &media_type, &name, &inode_signed, &last_modified_time],
+            &[&id as &ToSql, &media_type, &name, &inode_signed, &last_modified_time],
         )?;
         Result::Ok(inode)
     }
