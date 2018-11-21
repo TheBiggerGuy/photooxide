@@ -96,8 +96,9 @@ fn main() {
 
     let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
 
+    let executor;
     if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
-        let executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
+        executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
         {
             let remote_photo_lib = remote_photo_lib.clone();
             let db = db.clone();
