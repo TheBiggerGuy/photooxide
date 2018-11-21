@@ -554,7 +554,7 @@ where
 mod test {
     use super::*;
 
-    use std::sync::RwLock;
+    use std::sync::Mutex;
 
     use rusqlite;
 
@@ -978,7 +978,7 @@ mod test {
     }
 
     fn build_test_db() -> Arc<SqliteDb> {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         Arc::new(SqliteDb::new(in_mem_db).unwrap())
     }
 }

@@ -1,7 +1,7 @@
 use std::convert::From;
 use std::option::Option;
 use std::result::Result;
-use std::sync::RwLock;
+use std::sync::Mutex;
 
 use rusqlite;
 
@@ -38,6 +38,9 @@ pub trait PhotoDbRo: Sized {
     // Check staleness
     fn last_updated_media(&self) -> Result<Option<UtcDateTime>, DbError>;
     fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError>;
+
+    // existence
+    fn exists(&self, id: &GoogleId) -> Result<bool, DbError>;
 }
 
 pub trait PhotoDb: PhotoDbRo + Sized {
@@ -61,8 +64,8 @@ pub trait PhotoDb: PhotoDbRo + Sized {
     ) -> Result<(), DbError>;
 }
 
-fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
-    let db = db.write()?;
+fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
+    let db = db.lock()?;
 
     // AlbumsAndMediaItems
     db.execute(
@@ -125,7 +128,7 @@ fn ensure_schema(db: &RwLock<rusqlite::Connection>) -> Result<(), DbError> {
 }
 
 pub struct SqliteDb {
-    db: RwLock<rusqlite::Connection>,
+    db: Mutex<rusqlite::Connection>,
 }
 
 unsafe impl Send for SqliteDb {}
@@ -166,7 +169,7 @@ fn row_to_option_datetime(row: &rusqlite::Row) -> Result<Option<UtcDateTime>, Db
 
 impl PhotoDbRo for SqliteDb {
     fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError> {
-        let db = self.db.read()?;
+        let db = self.db.lock()?;
         let mut statment = db.prepare(&format!(
             "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
@@ -183,7 +186,7 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn albums(&self) -> Result<Vec<PhotoDbAlbum>, DbError> {
-        let db = self.db.read()?;
+        let db = self.db.lock()?;
         let mut statment = db.prepare(&format!(
             "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' ORDER BY google_id;",
             TableName::AlbumsAndMediaItems,
@@ -200,7 +203,7 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn media_items_in_album(&self, inode: Inode) -> Result<Vec<PhotoDbMediaItem>, DbError> {
-        let db = self.db.read()?;
+        let db = self.db.lock()?;
         let mut statment = db.prepare(&format!(
             "SELECT google_id, type, name, last_remote_check, inode
             FROM '{}' INNER JOIN '{}' ON '{}'.google_id = '{}'.media_item_google_id
@@ -239,7 +242,7 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn media_item_by_name(&self, name: &str) -> Result<Option<PhotoDbMediaItem>, DbError> {
-        let db = self.db.read()?;
+        let db = self.db.lock()?;
         let result: Result<PhotoDbMediaItem, rusqlite::Error> = db.query_row(
             &format!("SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' AND name = ?;", TableName::AlbumsAndMediaItems, MediaTypes::MediaItem),
             &[&name], row_to_media_item,
@@ -252,7 +255,7 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn album_by_name(&self, name: &str) -> Result<Option<PhotoDbAlbum>, DbError> {
-        let db = self.db.read()?;
+        let db = self.db.lock()?;
         let result: Result<PhotoDbAlbum, rusqlite::Error> = db.query_row(
             &format!("SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' AND name = ?;", TableName::AlbumsAndMediaItems, MediaTypes::Album),
             &[&name], row_to_album,
@@ -276,7 +279,7 @@ impl PhotoDbRo for SqliteDb {
     }
 
     fn item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItemAlbum>, DbError> {
-        let db = self.db.read()?;
+        let db = self.db.lock()?;
         let result: Result<PhotoDbMediaItemAlbum, rusqlite::Error> = db.query_row(
             &format!(
                 "SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE inode = ?;",
@@ -298,6 +301,23 @@ impl PhotoDbRo for SqliteDb {
 
     fn last_updated_album(&self) -> Result<Option<UtcDateTime>, DbError> {
         self.last_updated_x(MediaTypes::Album)
+    }
+
+    fn exists(&self, id: &GoogleId) -> Result<bool, DbError> {
+        let db = self.db.lock()?;
+        let result: Result<(), rusqlite::Error> = db.query_row(
+            &format!(
+                "SELECT 1 FROM '{}' WHERE google_id = ?;",
+                TableName::AlbumsAndMediaItems
+            ),
+            &[&id],
+            |_row| (),
+        );
+        match result {
+            Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(false),
+            Err(error) => Result::Err(DbError::from(error)),
+            Ok(_) => Result::Ok(true),
+        }
     }
 }
 
@@ -333,7 +353,7 @@ impl PhotoDb for SqliteDb {
         album_id: &GoogleId,
         media_item_id: &GoogleId,
     ) -> Result<(), DbError> {
-        self.db.write()?.execute(
+        self.db.lock()?.execute(
             &format!("INSERT OR REPLACE INTO '{}' (album_google_id, media_item_google_id) VALUES (?, ?);", TableName::MediaItemsInAlbum),
             &[&album_id, &media_item_id],
         )?;
@@ -342,14 +362,14 @@ impl PhotoDb for SqliteDb {
 }
 
 impl SqliteDb {
-    pub fn new(db: RwLock<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
+    pub fn new(db: Mutex<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
         ensure_schema(&db)?;
         ensure_schema_next_inode(&db)?;
         Result::Ok(SqliteDb { db })
     }
 
     fn last_updated_x(&self, media_type: MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
-        self.db.read()?.query_row(
+        self.db.lock()?.query_row(
             &format!(
                 "SELECT MIN(last_remote_check) AS min_last_remote_check FROM '{}' WHERE type = ?;",
                 TableName::AlbumsAndMediaItems
@@ -370,7 +390,7 @@ impl SqliteDb {
         let media_type = format!("{}", media_type);
         let inode_signed = inode as i64;
         let last_modified_time = last_modified_time.timestamp();
-        self.db.write()?.execute(
+        self.db.lock()?.execute(
             &format!("INSERT OR REPLACE INTO '{}' (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TableName::AlbumsAndMediaItems),
             &[&id, &media_type, &name, &inode_signed, &last_modified_time],
         )?;
@@ -384,7 +404,7 @@ mod test {
 
     #[test]
     fn sqlitedb_last_updated_album() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now_unix = Utc::now().timestamp();
@@ -438,7 +458,7 @@ mod test {
 
     #[test]
     fn sqlitedb_last_updated_media() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now_unix = Utc::now().timestamp();
@@ -492,7 +512,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_media_item() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -540,7 +560,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_album() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -585,7 +605,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_incroments_inode() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now_unix = Utc::now().timestamp();
@@ -607,7 +627,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_media_item_in_album() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now_unix = Utc::now().timestamp();
@@ -663,7 +683,7 @@ mod test {
 
     #[test]
     fn sqlitedb_media_items() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -694,7 +714,7 @@ mod test {
 
     #[test]
     fn sqlitedb_albums() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -727,7 +747,7 @@ mod test {
 
     #[test]
     fn sqlitedb_media_item_by_x() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -778,7 +798,7 @@ mod test {
 
     #[test]
     fn sqlitedb_album_by_x() {
-        let in_mem_db = RwLock::new(rusqlite::Connection::open_in_memory().unwrap());
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
         let db = SqliteDb::new(in_mem_db).unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -819,5 +839,27 @@ mod test {
             db.album_by_name("Album 2").unwrap().unwrap().google_id(),
             "GoogleId2"
         );
+    }
+
+    #[test]
+    fn sqlitedb_exists() {
+        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
+        let db = SqliteDb::new(in_mem_db).unwrap();
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        // Assert when DB is empty
+        assert_eq!(db.exists("GoogleId1").unwrap(), false);
+
+        // insert some data
+        db.upsert_album(&String::from("GoogleId1"), &String::from("Album 1"), &now)
+            .unwrap();
+        db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 1"), &now)
+            .unwrap();
+
+        // normal
+        assert_eq!(db.exists("GoogleId1").unwrap(), true);
+        assert_eq!(db.exists("GoogleId2").unwrap(), true);
+        assert_eq!(db.exists("GoogleId3").unwrap(), false);
     }
 }

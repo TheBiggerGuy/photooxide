@@ -27,7 +27,7 @@ extern crate scheduled_executor;
 use std::env;
 use std::ffi::OsStr;
 use std::option::Option;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex};
 
 use oauth2::{
     Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, DiskTokenStorage,
@@ -87,7 +87,7 @@ fn main() {
     let photos_library = PhotosLibrary::new(api_http_client, auth);
 
     let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
-    let db = Arc::new(SqliteDb::new(RwLock::new(sqlite_connection)).unwrap());
+    let db = Arc::new(SqliteDb::new(Mutex::new(sqlite_connection)).unwrap());
 
     let remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(
         photos_library,
@@ -96,7 +96,7 @@ fn main() {
 
     let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
 
-    if option_env!("PHOTOOXIDE_DISABLE_REFRESH").is_none() {
+    if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
         let executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
         {
             let remote_photo_lib = remote_photo_lib.clone();
@@ -113,8 +113,12 @@ fn main() {
                 time::Duration::hours(12).to_std().unwrap(),
                 move |_remote| {
                     warn!("Start background albums refresh");
-                    let remote_photo_lib = remote_photo_lib.lock().unwrap();
-                    for album in remote_photo_lib.albums().unwrap() {
+                    let albums;
+                    {
+                        let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
+                        albums = remote_photo_lib_unlocked.albums().unwrap()
+                    }
+                    for album in albums {
                         match db.upsert_album(&album.google_id(), &album.name, &Utc::now()) {
                             Ok(inode) => {
                                 debug!("upserted album='{:?}' into inode={:?}", album, inode)
@@ -123,24 +127,31 @@ fn main() {
                                 error!("Failed to upsert album='{:?}' due to {:?}", album, error)
                             }
                         }
-                        for media_item_in_album in
-                            remote_photo_lib.album(&album.google_id()).unwrap()
+                        let media_items_in_album;
                         {
-                            warn!("Found {} in album {}", media_item_in_album.name, album.name);
-                            match db.upsert_media_item_in_album(
-                                album.google_id(),
-                                media_item_in_album.google_id(),
-                            ) {
-                                Ok(()) => debug!(
-                                    "upsert media_item='{:?}' into album='{:?}'",
-                                    media_item_in_album, album
-                                ),
-                                Err(error) => error!(
+                            let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
+                            media_items_in_album =
+                                remote_photo_lib_unlocked.album(&album.google_id()).unwrap();
+                        }
+                        media_items_in_album
+                            .iter()
+                            .filter(|item| db.exists(item.google_id()).unwrap())
+                            .for_each(|media_item_in_album| {
+                                warn!("Found {} in album {}", media_item_in_album.name, album.name);
+                                match db.upsert_media_item_in_album(
+                                    album.google_id(),
+                                    media_item_in_album.google_id(),
+                                ) {
+                                    Ok(()) => debug!(
+                                        "upsert media_item='{:?}' into album='{:?}'",
+                                        media_item_in_album, album
+                                    ),
+                                    Err(error) => error!(
                                 "Failed to upsert media_item='{:?}' into album='{:?}' due to {:?}",
                                 media_item_in_album, album, error
                             ),
-                            }
-                        }
+                                }
+                            });
                     }
                     warn!("End background albums refresh");
                 },
@@ -161,8 +172,12 @@ fn main() {
                 time::Duration::days(5).to_std().unwrap(),
                 move |_remote| {
                     warn!("Start background media_items refresh");
-                    let remote_photo_lib = remote_photo_lib.lock().unwrap();
-                    for media_item in remote_photo_lib.media_items().unwrap() {
+                    let media_items;
+                    {
+                        let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
+                        media_items = remote_photo_lib_unlocked.media_items().unwrap();
+                    }
+                    for media_item in media_items {
                         match db.upsert_media_item(
                             &media_item.google_id(),
                             &media_item.name,
