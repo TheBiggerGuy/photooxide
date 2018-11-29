@@ -59,40 +59,48 @@ fn main() {
     println!("Hello, world!");
     debug!("Hello, world!");
 
-    // Get an ApplicationSecret instance by some means. It contains the `client_id` and
-    // `client_secret`, among other things.
-    let secret = json::from_str::<ConsoleApplicationSecret>(CLIENT_SECRET)
-        .unwrap()
-        .installed
-        .unwrap();
+    let auth;
+    {
+        // Get an ApplicationSecret instance by some means. It contains the `client_id` and
+        // `client_secret`, among other things.
+        let secret = json::from_str::<ConsoleApplicationSecret>(CLIENT_SECRET)
+            .unwrap()
+            .installed
+            .unwrap();
 
-    let token_storage = DiskTokenStorage::new(&"token_storage.json".to_string()).unwrap();
-    let auth = Authenticator::new(
-        &secret,
-        DefaultAuthenticatorDelegate,
-        hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+        let token_storage = DiskTokenStorage::new(&"token_storage.json".to_string()).unwrap();
+        auth = Authenticator::new(
+            &secret,
+            DefaultAuthenticatorDelegate,
+            hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+                hyper_rustls::TlsClient::new(),
+            )),
+            token_storage,
+            Option::Some(FlowType::InstalledInteractive),
+        );
+    }
+
+    let db;
+    {
+        let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
+        db = Arc::new(SqliteDb::new(Mutex::new(sqlite_connection)).unwrap());
+    }
+
+    let remote_photo_lib;
+    {
+        let api_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
             hyper_rustls::TlsClient::new(),
-        )),
-        token_storage,
-        Option::Some(FlowType::InstalledInteractive),
-    );
+        ));
+        let data_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+            hyper_rustls::TlsClient::new(),
+        ));
 
-    let api_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
-        hyper_rustls::TlsClient::new(),
-    ));
-    let data_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
-        hyper_rustls::TlsClient::new(),
-    ));
-
-    let photos_library = PhotosLibrary::new(api_http_client, auth);
-
-    let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
-    let db = Arc::new(SqliteDb::new(Mutex::new(sqlite_connection)).unwrap());
-
-    let remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(
-        photos_library,
-        data_http_client,
-    )));
+        let photos_library = PhotosLibrary::new(api_http_client, auth);
+        remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(
+            photos_library,
+            data_http_client,
+        )));
+    }
 
     let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
 
