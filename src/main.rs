@@ -36,15 +36,15 @@ use oauth2::{
 use photoslibrary1::PhotosLibrary;
 use serde_json as json;
 
-use chrono::Utc;
-
+mod background_update;
 mod domain;
+use background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
 
 mod db;
-use db::{PhotoDb, PhotoDbRo, SqliteDb};
+use db::SqliteDb;
 
 mod photolib;
-use photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
+use photolib::HttpRemotePhotoLib;
 
 mod photofs;
 use photofs::*;
@@ -103,58 +103,12 @@ fn main() {
             let remote_photo_lib = remote_photo_lib.clone();
             let db = db.clone();
 
-            let album_update_delay = match db.last_updated_album().unwrap() {
-                Some(_) => time::Duration::seconds(60),
-                None => time::Duration::seconds(5),
-            };
-            info!("album_update_delay: {}", album_update_delay);
-
             executor.schedule_fixed_rate(
-                album_update_delay.to_std().unwrap(),
+                time::Duration::seconds(5).to_std().unwrap(),
                 time::Duration::hours(12).to_std().unwrap(),
-                move |_remote| {
-                    warn!("Start background albums refresh");
-                    let albums;
-                    {
-                        let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
-                        albums = remote_photo_lib_unlocked.albums().unwrap()
-                    }
-                    for album in albums {
-                        match db.upsert_album(&album.google_id(), &album.name, &Utc::now()) {
-                            Ok(inode) => {
-                                debug!("upserted album='{:?}' into inode={:?}", album, inode)
-                            }
-                            Err(error) => {
-                                error!("Failed to upsert album='{:?}' due to {:?}", album, error)
-                            }
-                        }
-                        let media_items_in_album;
-                        {
-                            let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
-                            media_items_in_album =
-                                remote_photo_lib_unlocked.album(&album.google_id()).unwrap();
-                        }
-                        media_items_in_album
-                            .iter()
-                            .filter(|item| db.exists(item.google_id()).unwrap())
-                            .for_each(|media_item_in_album| {
-                                warn!("Found {} in album {}", media_item_in_album.name, album.name);
-                                match db.upsert_media_item_in_album(
-                                    album.google_id(),
-                                    media_item_in_album.google_id(),
-                                ) {
-                                    Ok(()) => debug!(
-                                        "upsert media_item='{:?}' into album='{:?}'",
-                                        media_item_in_album, album
-                                    ),
-                                    Err(error) => error!(
-                                "Failed to upsert media_item='{:?}' into album='{:?}' due to {:?}",
-                                media_item_in_album, album, error
-                            ),
-                                }
-                            });
-                    }
-                    warn!("End background albums refresh");
+                move |_remote| match BackgroundAlbumUpdate::update(&remote_photo_lib, &db) {
+                    Err(msg) => error!("Background update of albums failed: {}", msg),
+                    Ok(_) => debug!("Background update of albums OK!"),
                 },
             );
         }
@@ -162,39 +116,12 @@ fn main() {
             let remote_photo_lib = remote_photo_lib.clone();
             let db = db.clone();
 
-            let media_update_delay = match db.last_updated_media().unwrap() {
-                Some(_) => time::Duration::minutes(5),
-                None => time::Duration::seconds(10),
-            };
-            info!("media_update_delay: {}", media_update_delay);
-
             executor.schedule_fixed_rate(
-                media_update_delay.to_std().unwrap(),
+                time::Duration::seconds(30).to_std().unwrap(),
                 time::Duration::days(5).to_std().unwrap(),
-                move |_remote| {
-                    warn!("Start background media_items refresh");
-                    let media_items;
-                    {
-                        let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
-                        media_items = remote_photo_lib_unlocked.media_items().unwrap();
-                    }
-                    for media_item in media_items {
-                        match db.upsert_media_item(
-                            &media_item.google_id(),
-                            &media_item.name,
-                            &Utc::now(),
-                        ) {
-                            Ok(inode) => debug!(
-                                "upserted media_item='{:?}' into inode={:?}",
-                                media_item, inode
-                            ),
-                            Err(error) => error!(
-                                "Failed to upsert media_item='{:?}' due to {:?}",
-                                media_item, error
-                            ),
-                        }
-                    }
-                    warn!("End background media_items refresh");
+                move |_remote| match BackgroundMediaUpdate::update(&remote_photo_lib, &db) {
+                    Err(msg) => error!("Background update of media failed: {}", msg),
+                    Ok(_) => debug!("Background update of media OK!"),
                 },
             );
         }
