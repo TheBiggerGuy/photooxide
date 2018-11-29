@@ -98,30 +98,28 @@ fn main() {
 
     let executor;
     if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
-        executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
-        {
-            let remote_photo_lib = remote_photo_lib.clone();
-            let db = db.clone();
+        executor = scheduled_executor::ThreadPoolExecutor::new(2).unwrap();
+        let updaters: Vec<Box<BackgroundUpdate>> = vec![
+            Box::new(BackgroundAlbumUpdate {
+                remote_photo_lib: remote_photo_lib.clone(),
+                db: db.clone(),
+            }),
+            Box::new(BackgroundMediaUpdate {
+                remote_photo_lib: remote_photo_lib.clone(),
+                db: db.clone(),
+            }),
+        ];
+        for updater in updaters {
+            let name = updater.name();
+            let delay = updater.delay();
+            let interval = updater.interval();
 
             executor.schedule_fixed_rate(
-                time::Duration::seconds(5).to_std().unwrap(),
-                time::Duration::hours(12).to_std().unwrap(),
-                move |_remote| match BackgroundAlbumUpdate::update(&remote_photo_lib, &db) {
-                    Err(msg) => error!("Background update of albums failed: {}", msg),
-                    Ok(_) => debug!("Background update of albums OK!"),
-                },
-            );
-        }
-        {
-            let remote_photo_lib = remote_photo_lib.clone();
-            let db = db.clone();
-
-            executor.schedule_fixed_rate(
-                time::Duration::seconds(30).to_std().unwrap(),
-                time::Duration::days(5).to_std().unwrap(),
-                move |_remote| match BackgroundMediaUpdate::update(&remote_photo_lib, &db) {
-                    Err(msg) => error!("Background update of media failed: {}", msg),
-                    Ok(_) => debug!("Background update of media OK!"),
+                delay.to_std().unwrap(),
+                interval.to_std().unwrap(),
+                move |_remote| match updater.update() {
+                    Err(msg) => error!("Background update of {} failed: {}", name, msg),
+                    Ok(_) => debug!("Background update of {} OK!", name),
                 },
             );
         }
