@@ -55,9 +55,8 @@ use rust_filesystem::RustFilesystemReal;
 const CLIENT_SECRET: &str = include_str!("../client_secret.json");
 
 fn main() {
-    env_logger::init();
-    println!("Hello, world!");
-    debug!("Hello, world!");
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("photooxide=info,photooxide::db::debug,photooxide::photofs=error,photooxide::photolib=debug")).init();
+    info!("Logging init");
 
     let auth;
     {
