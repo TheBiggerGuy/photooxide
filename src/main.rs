@@ -105,6 +105,7 @@ fn main() {
     let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
 
     let executor;
+    let mut scheduled_tasks: Vec<(&str, scheduled_executor::executor::TaskHandle)> = Vec::new();
     if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
         executor = scheduled_executor::ThreadPoolExecutor::new(2).unwrap();
         let updaters: Vec<Box<BackgroundUpdate>> = vec![
@@ -119,17 +120,22 @@ fn main() {
         ];
         for updater in updaters {
             let name = updater.name();
-            let delay = updater.delay();
-            let interval = updater.interval();
+            let delay = updater
+                .delay()
+                .to_std()
+                .expect("Failed to convert to std::time::duration");
+            let interval = updater
+                .interval()
+                .to_std()
+                .expect("Failed to convert to std::time::duration");
 
-            executor.schedule_fixed_rate(
-                delay.to_std().unwrap(),
-                interval.to_std().unwrap(),
-                move |_remote| match updater.update() {
-                    Err(msg) => error!("Background update of {} failed: {}", name, msg),
-                    Ok(_) => debug!("Background update of {} OK!", name),
-                },
-            );
+            let task = executor.schedule_fixed_rate(delay, interval, move |_remote| match updater
+                .update()
+            {
+                Err(msg) => error!("Background update of {} failed: {}", name, msg),
+                Ok(_) => debug!("Background update of {} OK!", name),
+            });
+            scheduled_tasks.push((name, task));
         }
     }
 
@@ -139,5 +145,22 @@ fn main() {
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();
 
-    fuse::mount(fs, &mountpoint, &options).unwrap();
+    info!("starting FUSE mount at {:?} with {:?}", mountpoint, options);
+    match fuse::mount(fs, &mountpoint, &options) {
+        Err(msg) => error!("FUSE mount failed: {}", msg),
+        Ok(_) => info!("FUSE mount ended without error"),
+    }
+    info!("Ended FUSE mount");
+
+    info!("Stopping background tasks...");
+    for task in &scheduled_tasks {
+        task.1.stop();
+    }
+    for task in &scheduled_tasks {
+        while !task.1.stopped() {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        debug!("Task {:?} stopped", task.0);
+    }
+    info!("...stopped background tasks");
 }
