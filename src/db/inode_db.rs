@@ -64,7 +64,7 @@ mod test {
     #[test]
     fn sqlitedb_next_inode() {
         let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::new(in_mem_db).unwrap();
+        let db = SqliteDb::try_new(in_mem_db).unwrap();
 
         assert_eq!(db.get_and_update_inode().unwrap(), 101);
         assert_eq!(db.get_and_update_inode().unwrap(), 102);

@@ -31,12 +31,14 @@ unsafe impl<C, A> Sync for BackgroundAlbumUpdate<C, A>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
-{}
+{
+}
 unsafe impl<C, A> Send for BackgroundAlbumUpdate<C, A>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
-{}
+{
+}
 
 impl<C, A> BackgroundUpdate for BackgroundAlbumUpdate<C, A>
 where
@@ -124,12 +126,14 @@ unsafe impl<C, A> Sync for BackgroundMediaUpdate<C, A>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
-{}
+{
+}
 unsafe impl<C, A> Send for BackgroundMediaUpdate<C, A>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
-{}
+{
+}
 
 impl<C, A> BackgroundUpdate for BackgroundMediaUpdate<C, A>
 where

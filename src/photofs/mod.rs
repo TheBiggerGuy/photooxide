@@ -534,7 +534,8 @@ where
                     kind,
                     name,
                 }
-            }).collect();
+            })
+            .collect();
         Result::Ok(ReadDirResponse {
             entries: result_entries,
         })
@@ -573,13 +574,13 @@ mod test {
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
-            assert!(
-                fs.lookup(
+            assert!(fs
+                .lookup(
                     &TestUniqRequest {},
                     FIXED_INODE_ROOT,
                     OsStr::new("not_in_root")
-                ).is_err()
-            );
+                )
+                .is_err());
         }
 
         {
@@ -606,7 +607,8 @@ mod test {
                     &TestUniqRequest {},
                     FIXED_INODE_ROOT,
                     OsStr::new("hello.txt"),
-                ).unwrap();
+                )
+                .unwrap();
 
             assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
             assert_eq!(response.attr.kind, FileType::RegularFile);
@@ -716,16 +718,16 @@ mod test {
             assert_eq!(response.data, b"Hello World!\n");
         }
 
-        assert!(
-            fs.release(
+        assert!(fs
+            .release(
                 &TestUniqRequest {},
                 FIXED_INODE_HELLO_WORLD,
                 fh,
                 0,
                 0,
                 false
-            ).is_ok()
-        );
+            )
+            .is_ok());
     }
 
     #[test]
@@ -830,14 +832,12 @@ mod test {
         // read unknown inode or fh
         {
             let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
-            assert!(
-                fs.read(&TestUniqRequest {}, inode + 1, open.fh, 0, 5)
-                    .is_err()
-            );
-            assert!(
-                fs.read(&TestUniqRequest {}, inode, open.fh + 1, 0, 5)
-                    .is_err()
-            );
+            assert!(fs
+                .read(&TestUniqRequest {}, inode + 1, open.fh, 0, 5)
+                .is_err());
+            assert!(fs
+                .read(&TestUniqRequest {}, inode, open.fh + 1, 0, 5)
+                .is_err());
         }
     }
 
@@ -892,16 +892,14 @@ mod test {
             .fh;
 
         {
-            assert!(
-                fs.readdir(&TestUniqRequest {}, FIXED_INODE_ROOT + 1, fh, 0)
-                    .is_err()
-            );
+            assert!(fs
+                .readdir(&TestUniqRequest {}, FIXED_INODE_ROOT + 1, fh, 0)
+                .is_err());
         }
         {
-            assert!(
-                fs.readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh + 1, 0)
-                    .is_err()
-            );
+            assert!(fs
+                .readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh + 1, 0)
+                .is_err());
         }
     }
 
@@ -925,10 +923,9 @@ mod test {
             .unwrap()
             .fh;
 
-        assert!(
-            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
-                .is_ok()
-        );
+        assert!(fs
+            .releasedir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
+            .is_ok());
     }
 
     #[derive(Debug)]
@@ -979,6 +976,6 @@ mod test {
 
     fn build_test_db() -> Arc<SqliteDb> {
         let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        Arc::new(SqliteDb::new(in_mem_db).unwrap())
+        Arc::new(SqliteDb::try_new(in_mem_db).unwrap())
     }
 }

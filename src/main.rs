@@ -82,7 +82,7 @@ fn main() {
     let db;
     {
         let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
-        db = Arc::new(SqliteDb::new(Mutex::new(sqlite_connection)).unwrap());
+        db = Arc::new(SqliteDb::try_new(Mutex::new(sqlite_connection)).unwrap());
     }
 
     let remote_photo_lib;
