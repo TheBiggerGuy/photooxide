@@ -36,15 +36,15 @@ use oauth2::{
 use photoslibrary1::PhotosLibrary;
 use serde_json as json;
 
-use chrono::Utc;
-
+mod background_update;
 mod domain;
+use background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
 
 mod db;
-use db::{PhotoDb, PhotoDbRo, SqliteDb};
+use db::SqliteDb;
 
 mod photolib;
-use photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
+use photolib::HttpRemotePhotoLib;
 
 mod photofs;
 use photofs::*;
@@ -55,148 +55,86 @@ use rust_filesystem::RustFilesystemReal;
 const CLIENT_SECRET: &str = include_str!("../client_secret.json");
 
 fn main() {
-    env_logger::init();
-    println!("Hello, world!");
-    debug!("Hello, world!");
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("photooxide=info,photooxide::db::debug,photooxide::photofs=error,photooxide::photolib=debug")).init();
+    info!("Logging init");
 
-    // Get an ApplicationSecret instance by some means. It contains the `client_id` and
-    // `client_secret`, among other things.
-    let secret = json::from_str::<ConsoleApplicationSecret>(CLIENT_SECRET)
-        .unwrap()
-        .installed
-        .unwrap();
+    let auth;
+    {
+        // Get an ApplicationSecret instance by some means. It contains the `client_id` and
+        // `client_secret`, among other things.
+        let secret = json::from_str::<ConsoleApplicationSecret>(CLIENT_SECRET)
+            .unwrap()
+            .installed
+            .unwrap();
 
-    let token_storage = DiskTokenStorage::new(&"token_storage.json".to_string()).unwrap();
-    let auth = Authenticator::new(
-        &secret,
-        DefaultAuthenticatorDelegate,
-        hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+        let token_storage = DiskTokenStorage::new(&"token_storage.json".to_string()).unwrap();
+        auth = Authenticator::new(
+            &secret,
+            DefaultAuthenticatorDelegate,
+            hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+                hyper_rustls::TlsClient::new(),
+            )),
+            token_storage,
+            Option::Some(FlowType::InstalledInteractive),
+        );
+    }
+
+    let db;
+    {
+        let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
+        db = Arc::new(SqliteDb::try_new(Mutex::new(sqlite_connection)).unwrap());
+    }
+
+    let remote_photo_lib;
+    {
+        let api_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
             hyper_rustls::TlsClient::new(),
-        )),
-        token_storage,
-        Option::Some(FlowType::InstalledInteractive),
-    );
+        ));
+        let data_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
+            hyper_rustls::TlsClient::new(),
+        ));
 
-    let api_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
-        hyper_rustls::TlsClient::new(),
-    ));
-    let data_http_client = hyper::Client::with_connector(hyper::net::HttpsConnector::new(
-        hyper_rustls::TlsClient::new(),
-    ));
-
-    let photos_library = PhotosLibrary::new(api_http_client, auth);
-
-    let sqlite_connection = rusqlite::Connection::open("cache.sqlite").unwrap();
-    let db = Arc::new(SqliteDb::new(Mutex::new(sqlite_connection)).unwrap());
-
-    let remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(
-        photos_library,
-        data_http_client,
-    )));
+        let photos_library = PhotosLibrary::new(api_http_client, auth);
+        remote_photo_lib = Arc::new(Mutex::new(HttpRemotePhotoLib::new(
+            photos_library,
+            data_http_client,
+        )));
+    }
 
     let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
 
     let executor;
+    let mut scheduled_tasks: Vec<(&str, scheduled_executor::executor::TaskHandle)> = Vec::new();
     if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
-        executor = scheduled_executor::ThreadPoolExecutor::new(1).unwrap();
-        {
-            let remote_photo_lib = remote_photo_lib.clone();
-            let db = db.clone();
+        executor = scheduled_executor::ThreadPoolExecutor::new(2).unwrap();
+        let updaters: Vec<Box<BackgroundUpdate>> = vec![
+            Box::new(BackgroundAlbumUpdate {
+                remote_photo_lib: remote_photo_lib.clone(),
+                db: db.clone(),
+            }),
+            Box::new(BackgroundMediaUpdate {
+                remote_photo_lib: remote_photo_lib.clone(),
+                db: db.clone(),
+            }),
+        ];
+        for updater in updaters {
+            let name = updater.name();
+            let delay = updater
+                .delay()
+                .to_std()
+                .expect("Failed to convert to std::time::duration");
+            let interval = updater
+                .interval()
+                .to_std()
+                .expect("Failed to convert to std::time::duration");
 
-            let album_update_delay = match db.last_updated_album().unwrap() {
-                Some(_) => time::Duration::seconds(60),
-                None => time::Duration::seconds(5),
-            };
-            info!("album_update_delay: {}", album_update_delay);
-
-            executor.schedule_fixed_rate(
-                album_update_delay.to_std().unwrap(),
-                time::Duration::hours(12).to_std().unwrap(),
-                move |_remote| {
-                    warn!("Start background albums refresh");
-                    let albums;
-                    {
-                        let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
-                        albums = remote_photo_lib_unlocked.albums().unwrap()
-                    }
-                    for album in albums {
-                        match db.upsert_album(&album.google_id(), &album.name, &Utc::now()) {
-                            Ok(inode) => {
-                                debug!("upserted album='{:?}' into inode={:?}", album, inode)
-                            }
-                            Err(error) => {
-                                error!("Failed to upsert album='{:?}' due to {:?}", album, error)
-                            }
-                        }
-                        let media_items_in_album;
-                        {
-                            let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
-                            media_items_in_album =
-                                remote_photo_lib_unlocked.album(&album.google_id()).unwrap();
-                        }
-                        media_items_in_album
-                            .iter()
-                            .filter(|item| db.exists(item.google_id()).unwrap())
-                            .for_each(|media_item_in_album| {
-                                warn!("Found {} in album {}", media_item_in_album.name, album.name);
-                                match db.upsert_media_item_in_album(
-                                    album.google_id(),
-                                    media_item_in_album.google_id(),
-                                ) {
-                                    Ok(()) => debug!(
-                                        "upsert media_item='{:?}' into album='{:?}'",
-                                        media_item_in_album, album
-                                    ),
-                                    Err(error) => error!(
-                                "Failed to upsert media_item='{:?}' into album='{:?}' due to {:?}",
-                                media_item_in_album, album, error
-                            ),
-                                }
-                            });
-                    }
-                    warn!("End background albums refresh");
-                },
-            );
-        }
-        {
-            let remote_photo_lib = remote_photo_lib.clone();
-            let db = db.clone();
-
-            let media_update_delay = match db.last_updated_media().unwrap() {
-                Some(_) => time::Duration::minutes(5),
-                None => time::Duration::seconds(10),
-            };
-            info!("media_update_delay: {}", media_update_delay);
-
-            executor.schedule_fixed_rate(
-                media_update_delay.to_std().unwrap(),
-                time::Duration::days(5).to_std().unwrap(),
-                move |_remote| {
-                    warn!("Start background media_items refresh");
-                    let media_items;
-                    {
-                        let remote_photo_lib_unlocked = remote_photo_lib.lock().unwrap();
-                        media_items = remote_photo_lib_unlocked.media_items().unwrap();
-                    }
-                    for media_item in media_items {
-                        match db.upsert_media_item(
-                            &media_item.google_id(),
-                            &media_item.name,
-                            &Utc::now(),
-                        ) {
-                            Ok(inode) => debug!(
-                                "upserted media_item='{:?}' into inode={:?}",
-                                media_item, inode
-                            ),
-                            Err(error) => error!(
-                                "Failed to upsert media_item='{:?}' due to {:?}",
-                                media_item, error
-                            ),
-                        }
-                    }
-                    warn!("End background media_items refresh");
-                },
-            );
+            let task = executor.schedule_fixed_rate(delay, interval, move |_remote| match updater
+                .update()
+            {
+                Err(msg) => error!("Background update of {} failed: {}", name, msg),
+                Ok(_) => debug!("Background update of {} OK!", name),
+            });
+            scheduled_tasks.push((name, task));
         }
     }
 
@@ -206,5 +144,22 @@ fn main() {
         .map(|o| o.as_ref())
         .collect::<Vec<&OsStr>>();
 
-    fuse::mount(fs, &mountpoint, &options).unwrap();
+    info!("starting FUSE mount at {:?} with {:?}", mountpoint, options);
+    match fuse::mount(fs, &mountpoint, &options) {
+        Err(msg) => error!("FUSE mount failed: {}", msg),
+        Ok(_) => info!("FUSE mount ended without error"),
+    }
+    info!("Ended FUSE mount");
+
+    info!("Stopping background tasks...");
+    for task in &scheduled_tasks {
+        task.1.stop();
+    }
+    for task in &scheduled_tasks {
+        while !task.1.stopped() {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        debug!("Task {:?} stopped", task.0);
+    }
+    info!("...stopped background tasks");
 }
