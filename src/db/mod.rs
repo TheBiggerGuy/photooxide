@@ -364,7 +364,18 @@ impl PhotoDb for SqliteDb {
 }
 
 impl SqliteDb {
-    pub fn try_new(db: Mutex<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
+    pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<SqliteDb, DbError> {
+        let connection = rusqlite::Connection::open(path)?;
+        SqliteDb::try_new(Mutex::new(connection))
+    }
+
+    #[cfg(test)]
+    pub fn in_memory() -> Result<SqliteDb, DbError> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        SqliteDb::try_new(Mutex::new(connection))
+    }
+
+    fn try_new(db: Mutex<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
         ensure_schema(&db)?;
         ensure_schema_next_inode(&db)?;
         Result::Ok(SqliteDb { db })
@@ -406,8 +417,7 @@ mod test {
 
     #[test]
     fn sqlitedb_last_updated_album() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
@@ -464,8 +474,7 @@ mod test {
 
     #[test]
     fn sqlitedb_last_updated_media() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
@@ -522,8 +531,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_media_item() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
@@ -571,8 +579,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_album() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
@@ -616,8 +623,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_incroments_inode() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
@@ -638,8 +644,7 @@ mod test {
 
     #[test]
     fn sqlitedb_upsert_media_item_in_album() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
@@ -692,8 +697,7 @@ mod test {
 
     #[test]
     fn sqlitedb_media_items() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
@@ -723,8 +727,7 @@ mod test {
 
     #[test]
     fn sqlitedb_albums() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
@@ -756,8 +759,7 @@ mod test {
 
     #[test]
     fn sqlitedb_media_item_by_x() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
@@ -807,8 +809,7 @@ mod test {
 
     #[test]
     fn sqlitedb_album_by_x() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
@@ -852,8 +853,7 @@ mod test {
 
     #[test]
     fn sqlitedb_exists() {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        let db = SqliteDb::try_new(in_mem_db).unwrap();
+        let db = SqliteDb::in_memory().unwrap();
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 

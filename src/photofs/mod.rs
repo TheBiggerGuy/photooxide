@@ -557,8 +557,6 @@ mod test {
 
     use std::sync::Mutex;
 
-    use rusqlite;
-
     use hyper;
 
     use chrono::{TimeZone, Utc};
@@ -975,7 +973,6 @@ mod test {
     }
 
     fn build_test_db() -> Arc<SqliteDb> {
-        let in_mem_db = Mutex::new(rusqlite::Connection::open_in_memory().unwrap());
-        Arc::new(SqliteDb::try_new(in_mem_db).unwrap())
+        Arc::new(SqliteDb::in_memory().unwrap())
     }
 }
