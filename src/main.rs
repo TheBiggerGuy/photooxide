@@ -29,22 +29,19 @@ use std::ffi::OsStr;
 use std::option::Option;
 use std::sync::{Arc, Mutex};
 
-use oauth2::{
-    Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, DiskTokenStorage,
-    FlowType,
-};
+use oauth2::{Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType};
 use photoslibrary1::PhotosLibrary;
-use serde_json as json;
 
 mod background_update;
-mod domain;
 use background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
+
+mod domain;
 
 mod db;
 use db::SqliteDb;
 
 mod photolib;
-use photolib::HttpRemotePhotoLib;
+use photolib::{HttpRemotePhotoLib, OauthTokenStorage};
 
 mod photofs;
 use photofs::*;
@@ -58,16 +55,18 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("photooxide=info,photooxide::db::debug,photooxide::photofs=error,photooxide::photolib=debug")).init();
     info!("Logging init");
 
+    let db = Arc::new(SqliteDb::from_path("cache.sqlite").unwrap());
+
     let auth;
     {
         // Get an ApplicationSecret instance by some means. It contains the `client_id` and
         // `client_secret`, among other things.
-        let secret = json::from_str::<ConsoleApplicationSecret>(CLIENT_SECRET)
+        let secret = serde_json::from_str::<ConsoleApplicationSecret>(CLIENT_SECRET)
             .unwrap()
             .installed
             .unwrap();
 
-        let token_storage = DiskTokenStorage::new(&"token_storage.json".to_string()).unwrap();
+        let token_storage = OauthTokenStorage::new(db.clone());
         auth = Authenticator::new(
             &secret,
             DefaultAuthenticatorDelegate,
@@ -78,8 +77,6 @@ fn main() {
             Option::Some(FlowType::InstalledInteractive),
         );
     }
-
-    let db = Arc::new(SqliteDb::from_path("cache.sqlite").unwrap());
 
     let remote_photo_lib;
     {

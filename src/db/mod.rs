@@ -20,6 +20,10 @@ mod inode_db;
 use self::inode_db::ensure_schema_next_inode;
 pub use self::inode_db::NextInodeDb;
 
+mod token_storage_db;
+use self::token_storage_db::ensure_schema_token_storage;
+pub use self::token_storage_db::TokenStorageDb;
+
 mod table_name;
 use self::table_name::TableName;
 
@@ -378,6 +382,7 @@ impl SqliteDb {
     fn try_new(db: Mutex<rusqlite::Connection>) -> Result<SqliteDb, DbError> {
         ensure_schema(&db)?;
         ensure_schema_next_inode(&db)?;
+        ensure_schema_token_storage(&db)?;
         Result::Ok(SqliteDb { db })
     }
 

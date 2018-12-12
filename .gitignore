@@ -10,7 +10,6 @@
 
 # Secrets
 client_secret.json
-token_storage.json
 
 # caches
 cache.sqlite

@@ -13,6 +13,9 @@ use domain::*;
 mod error;
 pub use self::error::RemotePhotoLibError;
 
+mod oauth_token_storage;
+pub use self::oauth_token_storage::{OauthTokenStorage, OauthTokenStorageError};
+
 #[derive(Debug, new)]
 pub struct ItemListing {
     id: String,
