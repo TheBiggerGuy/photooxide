@@ -16,7 +16,13 @@ impl FuseError {
     }
 }
 
-impl std::error::Error for FuseError {}
+impl std::error::Error for FuseError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            FuseError::FunctionNotImplemented => Option::None,
+        }
+    }
+}
 
 impl fmt::Display for FuseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -39,6 +45,9 @@ mod test {
 
     #[test]
     fn fuse_error_display() {
-        assert_eq!(format!("{}", FuseError::FunctionNotImplemented), "FuseError: FunctionNotImplemented");
+        assert_eq!(
+            format!("{}", FuseError::FunctionNotImplemented),
+            "FuseError: FunctionNotImplemented"
+        );
     }
 }

@@ -31,7 +31,16 @@ impl From<photoslibrary1::Error> for RemotePhotoLibError {
     }
 }
 
-impl std::error::Error for RemotePhotoLibError {}
+impl std::error::Error for RemotePhotoLibError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            RemotePhotoLibError::GoogleBackendError(err) => Option::Some(err),
+            RemotePhotoLibError::HttpClientError(err) => Option::Some(err),
+            RemotePhotoLibError::HttpApiError(_err) => Option::None,
+            RemotePhotoLibError::IoError(err) => Option::Some(err),
+        }
+    }
+}
 
 impl fmt::Display for RemotePhotoLibError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -36,6 +36,9 @@ use crate::background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, Bac
 
 mod domain;
 
+mod error;
+use crate::error::PhotoOxideError;
+
 mod db;
 use crate::db::SqliteDb;
 
@@ -50,11 +53,11 @@ use crate::rust_filesystem::RustFilesystemReal;
 
 const CLIENT_SECRET: &str = include_str!("../client_secret.json");
 
-fn main() {
+fn main() -> Result<(), PhotoOxideError> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("photooxide=info,photooxide::db::debug,photooxide::photofs=error,photooxide::photolib=debug")).init();
     info!("Logging init");
 
-    let db = Arc::new(SqliteDb::from_path("cache.sqlite").unwrap());
+    let db = Arc::new(SqliteDb::from_path("cache.sqlite")?);
 
     let auth;
     {
@@ -154,4 +157,6 @@ fn main() {
         debug!("Task {:?} stopped", task.0);
     }
     info!("...stopped background tasks");
+
+    Result::Ok(())
 }

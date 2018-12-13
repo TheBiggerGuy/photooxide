@@ -34,7 +34,14 @@ impl From<DbError> for FuseError {
     }
 }
 
-impl std::error::Error for PhotoFsError {}
+impl std::error::Error for PhotoFsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PhotoFsError::SqlError(err) => Option::Some(err),
+            PhotoFsError::LockingError => Option::None,
+        }
+    }
+}
 
 impl fmt::Display for PhotoFsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -58,6 +65,9 @@ mod test {
             ),
             "PhotoFsError: SqlError(SqliteSingleThreadedMode)"
         );
-        assert_eq!(format!("{}", PhotoFsError::LockingError), "PhotoFsError: LockingError");
+        assert_eq!(
+            format!("{}", PhotoFsError::LockingError),
+            "PhotoFsError: LockingError"
+        );
     }
 }
