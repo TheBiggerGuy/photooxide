@@ -2,9 +2,9 @@ use std::convert::From;
 
 use rusqlite;
 
-use rust_filesystem::FuseError;
+use crate::rust_filesystem::FuseError;
 
-use db::DbError;
+use crate::db::DbError;
 
 #[derive(Debug)]
 pub enum PhotoFsError {

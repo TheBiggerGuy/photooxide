@@ -7,15 +7,15 @@ use std::sync::{Arc, Mutex};
 use fuse::{self, FileType};
 use time::Timespec;
 
-use rust_filesystem::{
+use crate::rust_filesystem::{
     FileAttrResponse, FileEntryResponse, FuseError, FuseResult, OpenResponse, ReadDirEntry,
     ReadDirResponse, ReadResponse,
 };
 
-use db::PhotoDbRo;
-use domain::{Inode, MediaTypes, PhotoDbAlbum};
-use photolib::*;
-use rust_filesystem::{RustFilesystem, UniqRequest};
+use crate::db::PhotoDbRo;
+use crate::domain::{Inode, MediaTypes, PhotoDbAlbum};
+use crate::photolib::*;
+use crate::rust_filesystem::{RustFilesystem, UniqRequest};
 
 mod error;
 pub use self::error::PhotoFsError;
@@ -561,9 +561,9 @@ mod test {
 
     use chrono::{TimeZone, Utc};
 
-    use domain::{GoogleId, Inode};
+    use crate::domain::{GoogleId, Inode};
 
-    use db::{PhotoDb, SqliteDb};
+    use crate::db::{PhotoDb, SqliteDb};
 
     #[test]
     fn lookup_root() {

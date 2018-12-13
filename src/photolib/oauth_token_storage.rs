@@ -2,10 +2,10 @@ use std::fmt;
 use std::option::Option;
 use std::sync::Arc;
 
-use oauth2::{Token, TokenStorage};
+use crate::oauth2::{Token, TokenStorage};
 use serde_json;
 
-use db;
+use crate::db;
 
 #[derive(Debug)]
 pub enum OauthTokenStorageError {
@@ -86,9 +86,9 @@ where
 mod test {
     use super::*;
 
-    use oauth2::Token;
+    use crate::oauth2::Token;
 
-    use db::SqliteDb;
+    use crate::db::SqliteDb;
 
     #[test]
     fn oauthtokenstorage_oath_token() {

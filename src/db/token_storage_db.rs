@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use rusqlite;
 use rusqlite::types::ToSql;
 
-use db::{DbError, SqliteDb, TableName};
+use crate::db::{DbError, SqliteDb, TableName};
 
 pub trait TokenStorageDb: Sized {
     fn get_oath_token(&self, scope_hash: u64) -> Result<Option<String>, DbError>;

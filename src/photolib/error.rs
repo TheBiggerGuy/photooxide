@@ -2,7 +2,7 @@ use std;
 use std::convert::From;
 
 use hyper;
-use photoslibrary1;
+use crate::photoslibrary1;
 
 #[derive(Debug)]
 pub enum RemotePhotoLibError {

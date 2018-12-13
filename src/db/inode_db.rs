@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use rusqlite;
 use rusqlite::types::ToSql;
 
-use domain::Inode;
+use crate::domain::Inode;
 
-use db::{DbError, SqliteDb, TableName};
+use crate::db::{DbError, SqliteDb, TableName};
 
 pub trait NextInodeDb: Sized {
     fn get_and_update_inode(&self) -> Result<Inode, DbError>;

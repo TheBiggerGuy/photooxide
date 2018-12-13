@@ -9,7 +9,7 @@ use rusqlite::types::ToSql;
 
 use chrono::{TimeZone, Utc};
 
-use domain::{
+use crate::domain::{
     GoogleId, Inode, MediaTypes, PhotoDbAlbum, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime,
 };
 

@@ -29,25 +29,25 @@ use std::ffi::OsStr;
 use std::option::Option;
 use std::sync::{Arc, Mutex};
 
-use oauth2::{Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType};
-use photoslibrary1::PhotosLibrary;
+use crate::oauth2::{Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType};
+use crate::photoslibrary1::PhotosLibrary;
 
 mod background_update;
-use background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
+use crate::background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
 
 mod domain;
 
 mod db;
-use db::SqliteDb;
+use crate::db::SqliteDb;
 
 mod photolib;
-use photolib::{HttpRemotePhotoLib, OauthTokenStorage};
+use crate::photolib::{HttpRemotePhotoLib, OauthTokenStorage};
 
 mod photofs;
-use photofs::*;
+use crate::photofs::*;
 
 mod rust_filesystem;
-use rust_filesystem::RustFilesystemReal;
+use crate::rust_filesystem::RustFilesystemReal;
 
 const CLIENT_SECRET: &str = include_str!("../client_secret.json");
 
