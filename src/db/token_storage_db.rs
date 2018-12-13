@@ -24,7 +24,7 @@ pub fn ensure_schema_token_storage(db: &Mutex<rusqlite::Connection>) -> Result<(
             );",
             TableName::OauthTokenStorage
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     Result::Ok(())
@@ -57,7 +57,7 @@ impl TokenStorageDb for SqliteDb {
                         "INSERT OR REPLACE INTO '{}' (scope_hash, token) VALUES (?, ?);",
                         TableName::OauthTokenStorage
                     ),
-                    &[&scope_hash as &ToSql, &token_value],
+                    &[&scope_hash as &dyn ToSql, &token_value],
                 )?;
             }
             None => {

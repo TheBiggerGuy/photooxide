@@ -28,7 +28,7 @@ impl From<serde_json::error::Error> for OauthTokenStorageError {
 impl std::error::Error for OauthTokenStorageError {}
 
 impl fmt::Display for OauthTokenStorageError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             OauthTokenStorageError::DbError(err) => {
                 write!(f, "OauthTokenStorageError: DbError({:?})", err)

@@ -86,7 +86,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             );",
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -94,7 +94,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -102,7 +102,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     // MediaItemsInAlbum
@@ -119,7 +119,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -127,7 +127,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::MediaItemsInAlbum,
             TableName::MediaItemsInAlbum
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     Result::Ok(())
@@ -140,15 +140,15 @@ pub struct SqliteDb {
 unsafe impl Send for SqliteDb {}
 unsafe impl Sync for SqliteDb {}
 
-fn row_to_album(row: &rusqlite::Row) -> PhotoDbAlbum {
+fn row_to_album(row: &rusqlite::Row<'_, '_>) -> PhotoDbAlbum {
     row_to_item(row)
 }
 
-fn row_to_media_item(row: &rusqlite::Row) -> PhotoDbMediaItem {
+fn row_to_media_item(row: &rusqlite::Row<'_, '_>) -> PhotoDbMediaItem {
     row_to_item(row)
 }
 
-fn row_to_item(row: &rusqlite::Row) -> PhotoDbMediaItemAlbum {
+fn row_to_item(row: &rusqlite::Row<'_, '_>) -> PhotoDbMediaItemAlbum {
     let google_id: String = row.get(0);
     let media_type: String = row.get(1);
     let name: String = row.get(2);
@@ -163,7 +163,7 @@ fn row_to_item(row: &rusqlite::Row) -> PhotoDbMediaItemAlbum {
     )
 }
 
-fn row_to_option_datetime(row: &rusqlite::Row) -> Result<Option<UtcDateTime>, DbError> {
+fn row_to_option_datetime(row: &rusqlite::Row<'_, '_>) -> Result<Option<UtcDateTime>, DbError> {
     match row.get_checked(0) {
         Ok(last_modified) => Result::Ok(Option::Some(Utc::timestamp(&Utc, last_modified, 0))),
         Err(rusqlite::Error::InvalidColumnType(_, rusqlite::types::Type::Null)) => {
@@ -181,7 +181,8 @@ impl PhotoDbRo for SqliteDb {
             TableName::AlbumsAndMediaItems,
             MediaTypes::MediaItem
         ))?;
-        let media_items_results = statment.query_map(iter::empty::<&ToSql>(), row_to_media_item)?;
+        let media_items_results =
+            statment.query_map(iter::empty::<&dyn ToSql>(), row_to_media_item)?;
 
         let mut media_items: Vec<PhotoDbMediaItem> = Vec::new();
         for media_item_result in media_items_results {
@@ -198,7 +199,7 @@ impl PhotoDbRo for SqliteDb {
             TableName::AlbumsAndMediaItems,
             MediaTypes::Album
         ))?;
-        let media_items_results = statment.query_map(iter::empty::<&ToSql>(), row_to_album)?;
+        let media_items_results = statment.query_map(iter::empty::<&dyn ToSql>(), row_to_album)?;
 
         let mut media_items: Vec<PhotoDbAlbum> = Vec::new();
         for media_item_result in media_items_results {
@@ -410,7 +411,7 @@ impl SqliteDb {
         let last_modified_time = last_modified_time.timestamp();
         self.db.lock()?.execute(
             &format!("INSERT OR REPLACE INTO '{}' (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TableName::AlbumsAndMediaItems),
-            &[&id as &ToSql, &media_type, &name, &inode_signed, &last_modified_time],
+            &[&id as &dyn ToSql, &media_type, &name, &inode_signed, &last_modified_time],
         )?;
         Result::Ok(inode)
     }

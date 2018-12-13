@@ -3,26 +3,23 @@ extern crate log;
 #[macro_use]
 extern crate derive_new;
 
-extern crate env_logger;
+use env_logger;
 
-extern crate fuse;
-extern crate libc;
-extern crate time;
+use fuse;
+use libc;
 
-extern crate google_photoslibrary1 as photoslibrary1;
-extern crate hyper;
-extern crate hyper_rustls;
-extern crate serde;
-extern crate serde_json;
-extern crate yup_oauth2 as oauth2;
+use google_photoslibrary1 as photoslibrary1;
+use hyper;
+use hyper_rustls;
 
-extern crate rusqlite;
+use serde_json;
+use yup_oauth2 as oauth2;
 
-extern crate chrono;
+use rusqlite;
 
-extern crate users;
+use users;
 
-extern crate scheduled_executor;
+use scheduled_executor;
 
 use std::env;
 use std::ffi::OsStr;
@@ -102,7 +99,7 @@ fn main() {
     let mut scheduled_tasks: Vec<(&str, scheduled_executor::executor::TaskHandle)> = Vec::new();
     if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
         executor = scheduled_executor::ThreadPoolExecutor::new(2).unwrap();
-        let updaters: Vec<Box<BackgroundUpdate>> = vec![
+        let updaters: Vec<Box<dyn BackgroundUpdate>> = vec![
             Box::new(BackgroundAlbumUpdate {
                 remote_photo_lib: remote_photo_lib.clone(),
                 db: db.clone(),

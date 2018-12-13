@@ -73,7 +73,11 @@ where
         }
     }
 
-    fn lookup_root(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
+    fn lookup_root(
+        &mut self,
+        _req: &dyn UniqRequest,
+        name: &OsStr,
+    ) -> FuseResult<FileEntryResponse<'_>> {
         match name.to_str().unwrap() {
             "hello.txt" => Result::Ok(FileEntryResponse {
                 ttl: &TTL,
@@ -104,7 +108,11 @@ where
         }
     }
 
-    fn lookup_albums(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
+    fn lookup_albums(
+        &mut self,
+        _req: &dyn UniqRequest,
+        name: &OsStr,
+    ) -> FuseResult<FileEntryResponse<'_>> {
         let name = name.to_str().unwrap();
         match self.photo_db.album_by_name(&String::from(name)) {
             Ok(Option::Some(album)) => {
@@ -135,13 +143,17 @@ where
     // TODO: Check photo by name is actually in that album
     fn lookup_media_items_in_album(
         &mut self,
-        _req: &UniqRequest,
+        _req: &dyn UniqRequest,
         name: &OsStr,
-    ) -> FuseResult<FileEntryResponse> {
+    ) -> FuseResult<FileEntryResponse<'_>> {
         self.lookup_media(_req, name)
     }
 
-    fn lookup_media(&mut self, _req: &UniqRequest, name: &OsStr) -> FuseResult<FileEntryResponse> {
+    fn lookup_media(
+        &mut self,
+        _req: &dyn UniqRequest,
+        name: &OsStr,
+    ) -> FuseResult<FileEntryResponse<'_>> {
         let name = name.to_str().unwrap();
         match self.photo_db.media_item_by_name(&String::from(name)) {
             Ok(Option::Some(media_item)) => Result::Ok(FileEntryResponse {
@@ -267,10 +279,10 @@ where
 {
     fn lookup(
         &mut self,
-        req: &UniqRequest,
+        req: &dyn UniqRequest,
         parent: u64,
         name: &OsStr,
-    ) -> FuseResult<FileEntryResponse> {
+    ) -> FuseResult<FileEntryResponse<'_>> {
         match parent {
             FIXED_INODE_ROOT => self.lookup_root(req, name),
             FIXED_INODE_ALBUMS => self.lookup_albums(req, name),
@@ -295,7 +307,7 @@ where
         }
     }
 
-    fn getattr(&mut self, _req: &UniqRequest, ino: u64) -> FuseResult<FileAttrResponse> {
+    fn getattr(&mut self, _req: &dyn UniqRequest, ino: u64) -> FuseResult<FileAttrResponse<'_>> {
         debug!("FS getattr: ino={}", ino);
         match ino {
             FIXED_INODE_ROOT => Result::Ok(FileAttrResponse {
@@ -348,7 +360,7 @@ where
         }
     }
 
-    fn open(&mut self, _req: &UniqRequest, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
+    fn open(&mut self, _req: &dyn UniqRequest, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
         debug!("FS open: ino={}", ino);
 
         let file_data: Vec<u8>;
@@ -407,12 +419,12 @@ where
 
     fn read(
         &mut self,
-        _req: &UniqRequest,
+        _req: &dyn UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
         size: u32,
-    ) -> FuseResult<ReadResponse> {
+    ) -> FuseResult<ReadResponse<'_>> {
         let offset = offset as usize;
         debug!("FS read: ino={}, offset={} size={}", ino, offset, size);
 
@@ -442,7 +454,7 @@ where
 
     fn release(
         &mut self,
-        _req: &UniqRequest,
+        _req: &dyn UniqRequest,
         ino: u64,
         fh: u64,
         _flags: u32,
@@ -457,7 +469,12 @@ where
         }
     }
 
-    fn opendir(&mut self, _req: &UniqRequest, ino: u64, _flags: u32) -> FuseResult<OpenResponse> {
+    fn opendir(
+        &mut self,
+        _req: &dyn UniqRequest,
+        ino: u64,
+        _flags: u32,
+    ) -> FuseResult<OpenResponse> {
         let album_for_inode: Option<PhotoDbAlbum> = match ino {
             FIXED_INODE_ROOT | FIXED_INODE_MEDIA | FIXED_INODE_ALBUMS => Result::Ok(Option::None),
             _ => match self.photo_db.album_by_inode(ino) {
@@ -499,11 +516,11 @@ where
 
     fn readdir(
         &mut self,
-        _req: &UniqRequest,
+        _req: &dyn UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
-    ) -> FuseResult<ReadDirResponse> {
+    ) -> FuseResult<ReadDirResponse<'_>> {
         debug!("FS readdir: ino={}, offset={}", ino, offset);
 
         let fh_entry = match self.open_dirs.get(&fh) {
@@ -520,7 +537,7 @@ where
         // reply.error(ENOENT);
 
         let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
-        let result_entries: Vec<ReadDirEntry> = (&fh_entry.entries)
+        let result_entries: Vec<ReadDirEntry<'_>> = (&fh_entry.entries)
             .into_iter()
             .enumerate()
             .skip(to_skip)
@@ -541,7 +558,13 @@ where
         })
     }
 
-    fn releasedir(&mut self, _req: &UniqRequest, ino: u64, fh: u64, _flags: u32) -> FuseResult<()> {
+    fn releasedir(
+        &mut self,
+        _req: &dyn UniqRequest,
+        ino: u64,
+        fh: u64,
+        _flags: u32,
+    ) -> FuseResult<()> {
         debug!("FS releasedir: ino={}, fh={}", ino, fh);
 
         match self.open_dirs.remove(&fh) {

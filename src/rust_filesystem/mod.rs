@@ -18,38 +18,44 @@ pub use self::request::UniqRequest;
 pub trait RustFilesystem {
     fn lookup(
         &mut self,
-        req: &UniqRequest,
+        req: &dyn UniqRequest,
         parent: u64,
         name: &OsStr,
-    ) -> FuseResult<FileEntryResponse>;
-    fn getattr(&mut self, req: &UniqRequest, ino: u64) -> FuseResult<FileAttrResponse>;
-    fn open(&mut self, req: &UniqRequest, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
+    ) -> FuseResult<FileEntryResponse<'_>>;
+    fn getattr(&mut self, req: &dyn UniqRequest, ino: u64) -> FuseResult<FileAttrResponse<'_>>;
+    fn open(&mut self, req: &dyn UniqRequest, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
     fn read(
         &mut self,
-        req: &UniqRequest,
+        req: &dyn UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
         size: u32,
-    ) -> FuseResult<ReadResponse>;
+    ) -> FuseResult<ReadResponse<'_>>;
     fn release(
         &mut self,
-        req: &UniqRequest,
+        req: &dyn UniqRequest,
         ino: u64,
         fh: u64,
         flags: u32,
         lock_owner: u64,
         flush: bool,
     ) -> FuseResult<()>;
-    fn opendir(&mut self, req: &UniqRequest, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
+    fn opendir(&mut self, req: &dyn UniqRequest, ino: u64, flags: u32) -> FuseResult<OpenResponse>;
     fn readdir(
         &mut self,
-        req: &UniqRequest,
+        req: &dyn UniqRequest,
         ino: u64,
         fh: u64,
         offset: i64,
-    ) -> FuseResult<ReadDirResponse>;
-    fn releasedir(&mut self, req: &UniqRequest, ino: u64, fh: u64, flags: u32) -> FuseResult<()>;
+    ) -> FuseResult<ReadDirResponse<'_>>;
+    fn releasedir(
+        &mut self,
+        req: &dyn UniqRequest,
+        ino: u64,
+        fh: u64,
+        flags: u32,
+    ) -> FuseResult<()>;
 }
 
 #[derive(Debug, new)]
@@ -64,7 +70,7 @@ impl<X> Filesystem for RustFilesystemReal<X>
 where
     X: RustFilesystem,
 {
-    fn lookup(&mut self, req: &fuse::Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, req: &fuse::Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
         debug!("lookup: {:?}", req);
         match self.fs.lookup(req, parent, name) {
             Ok(response) => reply.entry(response.ttl, &response.attr, response.generation),
@@ -72,14 +78,14 @@ where
         }
     }
 
-    fn getattr(&mut self, req: &fuse::Request, ino: u64, reply: ReplyAttr) {
+    fn getattr(&mut self, req: &fuse::Request<'_>, ino: u64, reply: ReplyAttr) {
         match self.fs.getattr(req, ino) {
             Ok(response) => reply.attr(response.ttl, &response.attr),
             Err(error) => reply.error(error.libc_error_code()),
         }
     }
 
-    fn open(&mut self, req: &fuse::Request, ino: u64, flags: u32, reply: ReplyOpen) {
+    fn open(&mut self, req: &fuse::Request<'_>, ino: u64, flags: u32, reply: ReplyOpen) {
         match self.fs.open(req, ino, flags) {
             Ok(response) => reply.opened(response.fh, response.flags),
             Err(error) => reply.error(error.libc_error_code()),
@@ -88,7 +94,7 @@ where
 
     fn read(
         &mut self,
-        req: &fuse::Request,
+        req: &fuse::Request<'_>,
         ino: u64,
         fh: u64,
         offset: i64,
@@ -103,7 +109,7 @@ where
 
     fn release(
         &mut self,
-        req: &fuse::Request,
+        req: &fuse::Request<'_>,
         ino: u64,
         fh: u64,
         flags: u32,
@@ -117,7 +123,7 @@ where
         }
     }
 
-    fn opendir(&mut self, req: &fuse::Request, ino: u64, flags: u32, reply: ReplyOpen) {
+    fn opendir(&mut self, req: &fuse::Request<'_>, ino: u64, flags: u32, reply: ReplyOpen) {
         match self.fs.opendir(req, ino, flags) {
             Ok(response) => reply.opened(response.fh, response.flags),
             Err(error) => reply.error(error.libc_error_code()),
@@ -126,7 +132,7 @@ where
 
     fn readdir(
         &mut self,
-        req: &fuse::Request,
+        req: &fuse::Request<'_>,
         ino: u64,
         fh: u64,
         offset: i64,
@@ -152,7 +158,7 @@ where
 
     fn releasedir(
         &mut self,
-        req: &fuse::Request,
+        req: &fuse::Request<'_>,
         ino: u64,
         fh: u64,
         flags: u32,
