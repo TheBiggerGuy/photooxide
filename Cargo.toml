@@ -2,6 +2,7 @@
 name = "photooxide"
 version = "0.1.0"
 authors = ["Guy Taylor <thebigguy.co.uk@gmail.com>"]
+edition = "2018"
 
 [dependencies]
 google-photoslibrary1 = { git = "https://github.com/TheBiggerGuy/google-apis-rs", branch = "photoslibrary_str_int" }

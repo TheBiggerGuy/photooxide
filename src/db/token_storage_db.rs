@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use rusqlite;
 use rusqlite::types::ToSql;
 
-use db::{DbError, SqliteDb, TableName};
+use crate::db::{DbError, SqliteDb, TableName};
 
 pub trait TokenStorageDb: Sized {
     fn get_oath_token(&self, scope_hash: u64) -> Result<Option<String>, DbError>;
@@ -24,7 +24,7 @@ pub fn ensure_schema_token_storage(db: &Mutex<rusqlite::Connection>) -> Result<(
             );",
             TableName::OauthTokenStorage
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     Result::Ok(())
@@ -57,7 +57,7 @@ impl TokenStorageDb for SqliteDb {
                         "INSERT OR REPLACE INTO '{}' (scope_hash, token) VALUES (?, ?);",
                         TableName::OauthTokenStorage
                     ),
-                    &[&scope_hash as &ToSql, &token_value],
+                    &[&scope_hash as &dyn ToSql, &token_value],
                 )?;
             }
             None => {

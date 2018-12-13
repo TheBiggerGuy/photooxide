@@ -2,10 +2,10 @@ use std::fmt;
 use std::option::Option;
 use std::sync::Arc;
 
-use oauth2::{Token, TokenStorage};
+use crate::oauth2::{Token, TokenStorage};
 use serde_json;
 
-use db;
+use crate::db;
 
 #[derive(Debug)]
 pub enum OauthTokenStorageError {
@@ -28,7 +28,7 @@ impl From<serde_json::error::Error> for OauthTokenStorageError {
 impl std::error::Error for OauthTokenStorageError {}
 
 impl fmt::Display for OauthTokenStorageError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             OauthTokenStorageError::DbError(err) => {
                 write!(f, "OauthTokenStorageError: DbError({:?})", err)
@@ -86,33 +86,19 @@ where
 mod test {
     use super::*;
 
-    use oauth2::Token;
+    use crate::oauth2::Token;
 
-    use db::SqliteDb;
+    use crate::db::SqliteDb;
 
     #[test]
-    fn oauthtokenstorage_oath_token() {
+    fn oauthtokenstorage_oath_token() -> Result<(), OauthTokenStorageError> {
         let scopes: Vec<&str> = Vec::new();
-        let mut db = OauthTokenStorage::new(Arc::new(SqliteDb::in_memory().unwrap()));
+        let mut db = OauthTokenStorage::new(Arc::new(SqliteDb::in_memory()?));
 
-        assert!(db.get(0, &scopes).unwrap().is_none());
+        assert!(db.get(0, &scopes)?.is_none());
 
-        db.set(0, &scopes, Option::None).unwrap();
-        assert!(db.get(0, &scopes).unwrap().is_none());
-
-        let token0_ver0 = Token {
-            access_token: String::from("access_token_0_ver0"),
-            refresh_token: String::from("refresh_token"),
-            token_type: String::from("token_type"),
-            expires_in: Option::None,
-            expires_in_timestamp: Option::None,
-        };
-        db.set(0, &scopes, Option::Some(token0_ver0.clone()))
-            .unwrap();
-        assert_eq!(db.get(0, &scopes).unwrap().unwrap(), token0_ver0.clone());
-
-        db.set(0, &scopes, Option::None).unwrap();
-        assert!(db.get(0, &scopes).unwrap().is_none());
+        db.set(0, &scopes, Option::None)?;
+        assert!(db.get(0, &scopes)?.is_none());
 
         let token0_ver0 = Token {
             access_token: String::from("access_token_0_ver0"),
@@ -121,9 +107,21 @@ mod test {
             expires_in: Option::None,
             expires_in_timestamp: Option::None,
         };
-        db.set(0, &scopes, Option::Some(token0_ver0.clone()))
-            .unwrap();
-        assert_eq!(db.get(0, &scopes).unwrap().unwrap(), token0_ver0.clone());
+        db.set(0, &scopes, Option::Some(token0_ver0.clone()))?;
+        assert_eq!(db.get(0, &scopes)?.unwrap(), token0_ver0.clone());
+
+        db.set(0, &scopes, Option::None)?;
+        assert!(db.get(0, &scopes)?.is_none());
+
+        let token0_ver0 = Token {
+            access_token: String::from("access_token_0_ver0"),
+            refresh_token: String::from("refresh_token"),
+            token_type: String::from("token_type"),
+            expires_in: Option::None,
+            expires_in_timestamp: Option::None,
+        };
+        db.set(0, &scopes, Option::Some(token0_ver0.clone()))?;
+        assert_eq!(db.get(0, &scopes)?.unwrap(), token0_ver0.clone());
 
         let token0_ver1 = Token {
             access_token: String::from("access_token_0_ver1"),
@@ -132,9 +130,8 @@ mod test {
             expires_in: Option::None,
             expires_in_timestamp: Option::None,
         };
-        db.set(0, &scopes, Option::Some(token0_ver1.clone()))
-            .unwrap();
-        assert_eq!(db.get(0, &scopes).unwrap().unwrap(), token0_ver1.clone());
+        db.set(0, &scopes, Option::Some(token0_ver1.clone()))?;
+        assert_eq!(db.get(0, &scopes)?.unwrap(), token0_ver1.clone());
 
         let token1_ver0 = Token {
             access_token: String::from("access_token_1_ver0"),
@@ -143,13 +140,14 @@ mod test {
             expires_in: Option::None,
             expires_in_timestamp: Option::None,
         };
-        db.set(1, &scopes, Option::Some(token1_ver0.clone()))
-            .unwrap();
-        assert_eq!(db.get(0, &scopes).unwrap().unwrap(), token0_ver1.clone());
-        assert_eq!(db.get(1, &scopes).unwrap().unwrap(), token1_ver0.clone());
+        db.set(1, &scopes, Option::Some(token1_ver0.clone()))?;
+        assert_eq!(db.get(0, &scopes)?.unwrap(), token0_ver1.clone());
+        assert_eq!(db.get(1, &scopes)?.unwrap(), token1_ver0.clone());
 
-        db.set(0, &scopes, Option::None).unwrap();
-        assert!(db.get(0, &scopes).unwrap().is_none());
-        assert_eq!(db.get(1, &scopes).unwrap().unwrap(), token1_ver0.clone());
+        db.set(0, &scopes, Option::None)?;
+        assert!(db.get(0, &scopes)?.is_none());
+        assert_eq!(db.get(1, &scopes)?.unwrap(), token1_ver0.clone());
+
+        Result::Ok(())
     }
 }

@@ -10,7 +10,7 @@ pub enum MediaTypes {
 }
 
 impl fmt::Display for MediaTypes {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MediaTypes::Album => write!(f, "album"),
             MediaTypes::MediaItem => write!(f, "media_item"),

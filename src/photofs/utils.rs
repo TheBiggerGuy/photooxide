@@ -3,7 +3,7 @@ use users;
 use fuse::{FileAttr, FileType};
 use time::Timespec;
 
-use domain::Inode;
+use crate::domain::Inode;
 
 const CREATE_TIME: Timespec = Timespec {
     sec: 1_381_237_736,

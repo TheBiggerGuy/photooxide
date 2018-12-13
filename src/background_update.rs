@@ -1,12 +1,12 @@
 use std::borrow::BorrowMut;
 use std::sync::{Arc, Mutex};
 
-use oauth2;
+use crate::oauth2;
 
 use chrono::Utc;
 
-use db::{PhotoDb, PhotoDbRo, SqliteDb};
-use photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
+use crate::db::{PhotoDb, PhotoDbRo, SqliteDb};
+use crate::photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
 
 pub trait BackgroundUpdate: Sync + Send {
     fn update(&self) -> Result<(), String>;

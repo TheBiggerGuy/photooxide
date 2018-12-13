@@ -9,7 +9,7 @@ use rusqlite::types::ToSql;
 
 use chrono::{TimeZone, Utc};
 
-use domain::{
+use crate::domain::{
     GoogleId, Inode, MediaTypes, PhotoDbAlbum, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime,
 };
 
@@ -86,7 +86,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             );",
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -94,7 +94,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -102,7 +102,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     // MediaItemsInAlbum
@@ -119,7 +119,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::AlbumsAndMediaItems,
             TableName::AlbumsAndMediaItems
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
@@ -127,7 +127,7 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
             TableName::MediaItemsInAlbum,
             TableName::MediaItemsInAlbum
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     Result::Ok(())
@@ -140,15 +140,15 @@ pub struct SqliteDb {
 unsafe impl Send for SqliteDb {}
 unsafe impl Sync for SqliteDb {}
 
-fn row_to_album(row: &rusqlite::Row) -> PhotoDbAlbum {
+fn row_to_album(row: &rusqlite::Row<'_, '_>) -> PhotoDbAlbum {
     row_to_item(row)
 }
 
-fn row_to_media_item(row: &rusqlite::Row) -> PhotoDbMediaItem {
+fn row_to_media_item(row: &rusqlite::Row<'_, '_>) -> PhotoDbMediaItem {
     row_to_item(row)
 }
 
-fn row_to_item(row: &rusqlite::Row) -> PhotoDbMediaItemAlbum {
+fn row_to_item(row: &rusqlite::Row<'_, '_>) -> PhotoDbMediaItemAlbum {
     let google_id: String = row.get(0);
     let media_type: String = row.get(1);
     let name: String = row.get(2);
@@ -163,7 +163,7 @@ fn row_to_item(row: &rusqlite::Row) -> PhotoDbMediaItemAlbum {
     )
 }
 
-fn row_to_option_datetime(row: &rusqlite::Row) -> Result<Option<UtcDateTime>, DbError> {
+fn row_to_option_datetime(row: &rusqlite::Row<'_, '_>) -> Result<Option<UtcDateTime>, DbError> {
     match row.get_checked(0) {
         Ok(last_modified) => Result::Ok(Option::Some(Utc::timestamp(&Utc, last_modified, 0))),
         Err(rusqlite::Error::InvalidColumnType(_, rusqlite::types::Type::Null)) => {
@@ -181,7 +181,8 @@ impl PhotoDbRo for SqliteDb {
             TableName::AlbumsAndMediaItems,
             MediaTypes::MediaItem
         ))?;
-        let media_items_results = statment.query_map(iter::empty::<&ToSql>(), row_to_media_item)?;
+        let media_items_results =
+            statment.query_map(iter::empty::<&dyn ToSql>(), row_to_media_item)?;
 
         let mut media_items: Vec<PhotoDbMediaItem> = Vec::new();
         for media_item_result in media_items_results {
@@ -198,7 +199,7 @@ impl PhotoDbRo for SqliteDb {
             TableName::AlbumsAndMediaItems,
             MediaTypes::Album
         ))?;
-        let media_items_results = statment.query_map(iter::empty::<&ToSql>(), row_to_album)?;
+        let media_items_results = statment.query_map(iter::empty::<&dyn ToSql>(), row_to_album)?;
 
         let mut media_items: Vec<PhotoDbAlbum> = Vec::new();
         for media_item_result in media_items_results {
@@ -410,7 +411,7 @@ impl SqliteDb {
         let last_modified_time = last_modified_time.timestamp();
         self.db.lock()?.execute(
             &format!("INSERT OR REPLACE INTO '{}' (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TableName::AlbumsAndMediaItems),
-            &[&id as &ToSql, &media_type, &name, &inode_signed, &last_modified_time],
+            &[&id as &dyn ToSql, &media_type, &name, &inode_signed, &last_modified_time],
         )?;
         Result::Ok(inode)
     }
@@ -421,8 +422,8 @@ mod test {
     use super::*;
 
     #[test]
-    fn sqlitedb_last_updated_album() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_last_updated_album() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
@@ -431,55 +432,49 @@ mod test {
         let now_earlier_earlier = Utc::timestamp(&Utc, now_unix - 200, 0);
 
         // Test Empty DB
-        assert!(db.last_updated_album().unwrap().is_none());
+        assert!(db.last_updated_album()?.is_none());
 
         // Test single item
-        db.upsert_album(&String::from("GoogleId1"), &String::from("Title 1"), &now)
-            .unwrap();
-        assert_eq!(db.last_updated_album().unwrap().unwrap(), now);
+        db.upsert_album(&String::from("GoogleId1"), &String::from("Title 1"), &now)?;
+        assert_eq!(db.last_updated_album()?.unwrap(), now);
 
         // Test that the oldest item it returned
         db.upsert_album(
             &String::from("GoogleId2"),
             &String::from("Title 2"),
             &now_later,
-        )
-        .unwrap();
-        assert_eq!(db.last_updated_album().unwrap().unwrap(), now);
+        )?;
+        assert_eq!(db.last_updated_album()?.unwrap(), now);
 
         db.upsert_album(
             &String::from("GoogleId3"),
             &String::from("Title 3"),
             &now_earlier,
-        )
-        .unwrap();
-        assert_eq!(db.last_updated_album().unwrap().unwrap(), now_earlier);
+        )?;
+        assert_eq!(db.last_updated_album()?.unwrap(), now_earlier);
 
         // Test non album types are ignored
         db.upsert_media_item(
             &String::from("GoogleId4"),
             &String::from("Photo 1"),
             &now_earlier_earlier,
-        )
-        .unwrap();
-        assert_eq!(db.last_updated_album().unwrap().unwrap(), now_earlier);
+        )?;
+        assert_eq!(db.last_updated_album()?.unwrap(), now_earlier);
 
         // Test upsert old item
         db.upsert_album(
             &String::from("GoogleId1"),
             &String::from("Title 1"),
             &now_earlier_earlier,
-        )
-        .unwrap();
-        assert_eq!(
-            db.last_updated_album().unwrap().unwrap(),
-            now_earlier_earlier
-        );
+        )?;
+        assert_eq!(db.last_updated_album()?.unwrap(), now_earlier_earlier);
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_last_updated_media() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_last_updated_media() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
@@ -488,205 +483,186 @@ mod test {
         let now_earlier_earlier = Utc::timestamp(&Utc, now_unix - 200, 0);
 
         // Test Empty DB
-        assert!(db.last_updated_album().unwrap().is_none());
+        assert!(db.last_updated_album()?.is_none());
 
         // Test single item
-        db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
-            .unwrap();
-        assert_eq!(db.last_updated_media().unwrap().unwrap(), now);
+        db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)?;
+        assert_eq!(db.last_updated_media()?.unwrap(), now);
 
         // Test that the oldest item it returned
         db.upsert_media_item(
             &String::from("GoogleId2"),
             &String::from("Title 2"),
             &now_later,
-        )
-        .unwrap();
-        assert_eq!(db.last_updated_media().unwrap().unwrap(), now);
+        )?;
+        assert_eq!(db.last_updated_media()?.unwrap(), now);
 
         db.upsert_media_item(
             &String::from("GoogleId3"),
             &String::from("Title 3"),
             &now_earlier,
-        )
-        .unwrap();
-        assert_eq!(db.last_updated_media().unwrap().unwrap(), now_earlier);
+        )?;
+        assert_eq!(db.last_updated_media()?.unwrap(), now_earlier);
 
         // Test non media_ites types are ignored
         db.upsert_album(
             &String::from("GoogleId4"),
             &String::from("Album 1"),
             &now_earlier_earlier,
-        )
-        .unwrap();
-        assert_eq!(db.last_updated_media().unwrap().unwrap(), now_earlier);
+        )?;
+        assert_eq!(db.last_updated_media()?.unwrap(), now_earlier);
 
         // Test upsert old item
         db.upsert_media_item(
             &String::from("GoogleId1"),
             &String::from("Title 1"),
             &now_earlier_earlier,
-        )
-        .unwrap();
-        assert_eq!(
-            db.last_updated_album().unwrap().unwrap(),
-            now_earlier_earlier
-        );
+        )?;
+        assert_eq!(db.last_updated_album()?.unwrap(), now_earlier_earlier);
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_upsert_media_item() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_upsert_media_item() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert DB is empty
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 0);
 
         // Test insert
-        let inode = db
-            .upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
-            .unwrap();
+        let inode =
+            db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)?;
         assert_eq!(inode, 101);
 
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 1);
         assert_eq!(media_items[0].google_id(), "GoogleId1");
 
         // Test insert a second
-        let inode = db
-            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
-            .unwrap();
+        let inode =
+            db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)?;
         assert_eq!(inode, 102);
 
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 2);
         assert_eq!(media_items[0].google_id(), "GoogleId1");
         assert_eq!(media_items[1].google_id(), "GoogleId2");
 
         // Test upsert
-        let inode = db
-            .upsert_media_item(
-                &String::from("GoogleId1"),
-                &String::from("Title 1 new title"),
-                &now,
-            )
-            .unwrap();
+        let inode = db.upsert_media_item(
+            &String::from("GoogleId1"),
+            &String::from("Title 1 new title"),
+            &now,
+        )?;
         assert_eq!(inode, 103); // TODO: should be 101
 
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 2);
         assert_eq!(media_items[0].google_id(), "GoogleId1");
         assert_eq!(media_items[0].name, "Title 1 new title");
         assert_eq!(media_items[1].google_id(), "GoogleId2");
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_upsert_album() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_upsert_album() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert DB is empty
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 0);
 
         // Test insert
-        let inode = db
-            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
-            .unwrap();
+        let inode = db.upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)?;
         assert_eq!(inode, 101);
 
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
 
         // Test insert a second
-        let inode = db
-            .upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)
-            .unwrap();
+        let inode = db.upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)?;
         assert_eq!(inode, 102);
 
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 2);
         assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
         assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
 
         // Test upsert
-        let inode = db
-            .upsert_album(&"GoogleIdAlbum1", &"Album 1 new title", &now)
-            .unwrap();
+        let inode = db.upsert_album(&"GoogleIdAlbum1", &"Album 1 new title", &now)?;
         assert_eq!(inode, 103); // TODO: should be 101
 
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 2);
         assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
         assert_eq!(albums[0].name, "Album 1 new title");
         assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_upsert_incroments_inode() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_upsert_incroments_inode() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
 
-        assert_eq!(db.get_and_update_inode().unwrap(), 101);
+        assert_eq!(db.get_and_update_inode()?, 101);
         assert_eq!(
-            db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now,)
-                .unwrap(),
+            db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now,)?,
             102
         );
         assert_eq!(
-            db.upsert_album(&String::from("GoogleId2"), &String::from("Album 1"), &now,)
-                .unwrap(),
+            db.upsert_album(&String::from("GoogleId2"), &String::from("Album 1"), &now,)?,
             103
         );
-        assert_eq!(db.get_and_update_inode().unwrap(), 104);
+        assert_eq!(db.get_and_update_inode()?, 104);
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_upsert_media_item_in_album() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_upsert_media_item_in_album() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
 
         // Test Empty DB
-        assert_eq!(db.media_items_in_album(101).unwrap().len(), 0);
+        assert_eq!(db.media_items_in_album(101)?.len(), 0);
 
         // Test empty album item
-        let album_inode = db
-            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
-            .unwrap();
-        assert_eq!(db.media_items_in_album(album_inode).unwrap().len(), 0);
+        let album_inode = db.upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)?;
+        assert_eq!(db.media_items_in_album(album_inode)?.len(), 0);
 
         // Test single photo in Album
-        db.upsert_media_item(&"GoogleIdMediaItem1", &"Media Item 1", &now)
-            .unwrap();
-        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem1")
-            .unwrap();
+        db.upsert_media_item(&"GoogleIdMediaItem1", &"Media Item 1", &now)?;
+        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem1")?;
 
-        let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
+        let media_items_in_album = db.media_items_in_album(album_inode)?;
         assert_eq!(media_items_in_album.len(), 1);
         assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
 
         // Test upsert updates correctly
-        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem1")
-            .unwrap();
-        let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
+        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem1")?;
+        let media_items_in_album = db.media_items_in_album(album_inode)?;
         assert_eq!(media_items_in_album.len(), 1);
         assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
 
         // Test multiple photos in album
-        db.upsert_media_item(&"GoogleIdMediaItem2", &"Media Item 2", &now)
-            .unwrap();
-        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem2")
-            .unwrap();
+        db.upsert_media_item(&"GoogleIdMediaItem2", &"Media Item 2", &now)?;
+        db.upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem2")?;
 
-        let media_items_in_album = db.media_items_in_album(album_inode).unwrap();
+        let media_items_in_album = db.media_items_in_album(album_inode)?;
         assert_eq!(media_items_in_album.len(), 2);
         assert_eq!(media_items_in_album[0].google_id(), "GoogleIdMediaItem1");
         assert_eq!(media_items_in_album[1].google_id(), "GoogleIdMediaItem2");
@@ -698,182 +674,168 @@ mod test {
         assert!(db
             .upsert_media_item_in_album("GoogleIdAlbum1", "GoogleIdMediaItem3")
             .is_err());
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_media_items() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_media_items() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert DB is empty
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 0);
 
         // Test insert
-        db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
-            .unwrap();
+        db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)?;
 
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 1);
         assert_eq!(media_items[0].google_id(), "GoogleId1");
 
         // Test insert a second
-        let inode = db
-            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
-            .unwrap();
+        let inode =
+            db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)?;
         assert_eq!(inode, 102);
 
-        let media_items = db.media_items().unwrap();
+        let media_items = db.media_items()?;
         assert_eq!(media_items.len(), 2);
         assert_eq!(media_items[0].google_id(), "GoogleId1");
         assert_eq!(media_items[1].google_id(), "GoogleId2");
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_albums() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_albums() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert DB is empty
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 0);
 
         // Test insert
-        let inode = db
-            .upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)
-            .unwrap();
+        let inode = db.upsert_album(&"GoogleIdAlbum1", &"Album 1", &now)?;
         assert_eq!(inode, 101);
 
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
 
         // Test insert a second
-        let inode = db
-            .upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)
-            .unwrap();
+        let inode = db.upsert_album(&"GoogleIdAlbum2", &"Album 2", &now)?;
         assert_eq!(inode, 102);
 
-        let albums = db.albums().unwrap();
+        let albums = db.albums()?;
         assert_eq!(albums.len(), 2);
         assert_eq!(albums[0].google_id(), "GoogleIdAlbum1");
         assert_eq!(albums[1].google_id(), "GoogleIdAlbum2");
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_media_item_by_x() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_media_item_by_x() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert when DB is empty
-        assert!(db.media_item_by_inode(100).unwrap().is_none());
-        assert!(db.media_item_by_name("foo").unwrap().is_none());
+        assert!(db.media_item_by_inode(100)?.is_none());
+        assert!(db.media_item_by_name("foo")?.is_none());
 
         // insert some data
-        let inode1 = db
-            .upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)
-            .unwrap();
-        let inode2 = db
-            .upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)
-            .unwrap();
+        let inode1 =
+            db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now)?;
+        let inode2 =
+            db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 2"), &now)?;
 
         // Lookup by name and inode are equal
-        let by_inode = db.media_item_by_inode(inode1).unwrap().unwrap();
-        let by_name = db.media_item_by_name("Title 1").unwrap().unwrap();
+        let by_inode = db.media_item_by_inode(inode1)?.unwrap();
+        let by_name = db.media_item_by_name("Title 1")?.unwrap();
         assert_eq!(by_inode.google_id(), "GoogleId1");
         assert_eq!(by_inode, by_name);
 
         // Lookup find the correct node
         assert_eq!(
-            db.media_item_by_inode(inode1).unwrap().unwrap().google_id(),
+            db.media_item_by_inode(inode1)?.unwrap().google_id(),
             "GoogleId1"
         );
         assert_eq!(
-            db.media_item_by_inode(inode2).unwrap().unwrap().google_id(),
+            db.media_item_by_inode(inode2)?.unwrap().google_id(),
             "GoogleId2"
         );
 
         assert_eq!(
-            db.media_item_by_name("Title 1")
-                .unwrap()
-                .unwrap()
-                .google_id(),
+            db.media_item_by_name("Title 1")?.unwrap().google_id(),
             "GoogleId1"
         );
         assert_eq!(
-            db.media_item_by_name("Title 2")
-                .unwrap()
-                .unwrap()
-                .google_id(),
+            db.media_item_by_name("Title 2")?.unwrap().google_id(),
             "GoogleId2"
         );
+
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_album_by_x() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_album_by_x() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert when DB is empty
-        assert!(db.album_by_inode(100).unwrap().is_none());
-        assert!(db.album_by_name("foo").unwrap().is_none());
+        assert!(db.album_by_inode(100)?.is_none());
+        assert!(db.album_by_name("foo")?.is_none());
 
         // insert some data
-        let inode1 = db
-            .upsert_album(&String::from("GoogleId1"), &String::from("Album 1"), &now)
-            .unwrap();
-        let inode2 = db
-            .upsert_album(&String::from("GoogleId2"), &String::from("Album 2"), &now)
-            .unwrap();
+        let inode1 = db.upsert_album(&String::from("GoogleId1"), &String::from("Album 1"), &now)?;
+        let inode2 = db.upsert_album(&String::from("GoogleId2"), &String::from("Album 2"), &now)?;
 
         // Lookup by name and inode are equal
-        let by_inode = db.album_by_inode(inode1).unwrap().unwrap();
-        let by_name = db.album_by_name("Album 1").unwrap().unwrap();
+        let by_inode = db.album_by_inode(inode1)?.unwrap();
+        let by_name = db.album_by_name("Album 1")?.unwrap();
         assert_eq!(by_inode.google_id(), "GoogleId1");
         assert_eq!(by_inode, by_name);
 
         // Lookup find the correct node
+        assert_eq!(db.album_by_inode(inode1)?.unwrap().google_id(), "GoogleId1");
+        assert_eq!(db.album_by_inode(inode2)?.unwrap().google_id(), "GoogleId2");
+
         assert_eq!(
-            db.album_by_inode(inode1).unwrap().unwrap().google_id(),
+            db.album_by_name("Album 1")?.unwrap().google_id(),
             "GoogleId1"
         );
         assert_eq!(
-            db.album_by_inode(inode2).unwrap().unwrap().google_id(),
+            db.album_by_name("Album 2")?.unwrap().google_id(),
             "GoogleId2"
         );
 
-        assert_eq!(
-            db.album_by_name("Album 1").unwrap().unwrap().google_id(),
-            "GoogleId1"
-        );
-        assert_eq!(
-            db.album_by_name("Album 2").unwrap().unwrap().google_id(),
-            "GoogleId2"
-        );
+        Result::Ok(())
     }
 
     #[test]
-    fn sqlitedb_exists() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_exists() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         // Assert when DB is empty
-        assert_eq!(db.exists("GoogleId1").unwrap(), false);
+        assert_eq!(db.exists("GoogleId1")?, false);
 
         // insert some data
-        db.upsert_album(&String::from("GoogleId1"), &String::from("Album 1"), &now)
-            .unwrap();
-        db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 1"), &now)
-            .unwrap();
+        db.upsert_album(&String::from("GoogleId1"), &String::from("Album 1"), &now)?;
+        db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 1"), &now)?;
 
         // normal
-        assert_eq!(db.exists("GoogleId1").unwrap(), true);
-        assert_eq!(db.exists("GoogleId2").unwrap(), true);
-        assert_eq!(db.exists("GoogleId3").unwrap(), false);
+        assert_eq!(db.exists("GoogleId1")?, true);
+        assert_eq!(db.exists("GoogleId2")?, true);
+        assert_eq!(db.exists("GoogleId3")?, false);
+
+        Result::Ok(())
     }
 }

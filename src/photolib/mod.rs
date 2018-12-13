@@ -4,11 +4,11 @@ use std::io::Read;
 use std::option::Option;
 use std::result::Result;
 
+use crate::oauth2;
+use crate::photoslibrary1::{PhotosLibrary, SearchMediaItemsRequest};
 use hyper;
-use oauth2;
-use photoslibrary1::{PhotosLibrary, SearchMediaItemsRequest};
 
-use domain::*;
+use crate::domain::*;
 
 mod error;
 pub use self::error::RemotePhotoLibError;

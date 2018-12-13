@@ -5,9 +5,9 @@ use std::sync::Mutex;
 use rusqlite;
 use rusqlite::types::ToSql;
 
-use domain::Inode;
+use crate::domain::Inode;
 
-use db::{DbError, SqliteDb, TableName};
+use crate::db::{DbError, SqliteDb, TableName};
 
 pub trait NextInodeDb: Sized {
     fn get_and_update_inode(&self) -> Result<Inode, DbError>;
@@ -24,14 +24,14 @@ pub fn ensure_schema_next_inode(db: &Mutex<rusqlite::Connection>) -> Result<(), 
             "CREATE TABLE IF NOT EXISTS '{}' (inode INTEGER NOT NULL);",
             TableName::NextInode
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
     db.execute(
         &format!(
             "INSERT OR IGNORE INTO '{}' (inode) VALUES (100);",
             TableName::NextInode
         ),
-        iter::empty::<&ToSql>(),
+        iter::empty::<&dyn ToSql>(),
     )?;
 
     Result::Ok(())
@@ -43,11 +43,11 @@ impl NextInodeDb for SqliteDb {
         let db = self.db.lock()?;
         db.execute(
             &format!("UPDATE '{}' SET inode = inode + 1;", TableName::NextInode),
-            iter::empty::<&ToSql>(),
+            iter::empty::<&dyn ToSql>(),
         )?;
         let result: Result<i64, rusqlite::Error> = db.query_row(
             &format!("SELECT inode FROM '{}';", TableName::NextInode),
-            iter::empty::<&ToSql>(),
+            iter::empty::<&dyn ToSql>(),
             |row| row.get(0),
         );
         match result {
@@ -62,10 +62,12 @@ mod test {
     use super::*;
 
     #[test]
-    fn sqlitedb_next_inode() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_next_inode() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
-        assert_eq!(db.get_and_update_inode().unwrap(), 101);
-        assert_eq!(db.get_and_update_inode().unwrap(), 102);
+        assert_eq!(db.get_and_update_inode()?, 101);
+        assert_eq!(db.get_and_update_inode()?, 102);
+
+        Result::Ok(())
     }
 }

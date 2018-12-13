@@ -3,59 +3,61 @@ extern crate log;
 #[macro_use]
 extern crate derive_new;
 
-extern crate env_logger;
+use env_logger;
 
-extern crate fuse;
-extern crate libc;
-extern crate time;
+use fuse;
+use libc;
 
-extern crate google_photoslibrary1 as photoslibrary1;
-extern crate hyper;
-extern crate hyper_rustls;
-extern crate serde;
-extern crate serde_json;
-extern crate yup_oauth2 as oauth2;
+use google_photoslibrary1 as photoslibrary1;
+use hyper;
+use hyper_rustls;
 
-extern crate rusqlite;
+use serde_json;
+use yup_oauth2 as oauth2;
 
-extern crate chrono;
+use rusqlite;
 
-extern crate users;
+use users;
 
-extern crate scheduled_executor;
+use scheduled_executor;
 
 use std::env;
 use std::ffi::OsStr;
 use std::option::Option;
 use std::sync::{Arc, Mutex};
 
-use oauth2::{Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType};
-use photoslibrary1::PhotosLibrary;
+use crate::oauth2::{
+    Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType,
+};
+use crate::photoslibrary1::PhotosLibrary;
 
 mod background_update;
-use background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
+use crate::background_update::{BackgroundAlbumUpdate, BackgroundMediaUpdate, BackgroundUpdate};
 
 mod domain;
 
+mod error;
+use crate::error::PhotoOxideError;
+
 mod db;
-use db::SqliteDb;
+use crate::db::SqliteDb;
 
 mod photolib;
-use photolib::{HttpRemotePhotoLib, OauthTokenStorage};
+use crate::photolib::{HttpRemotePhotoLib, OauthTokenStorage};
 
 mod photofs;
-use photofs::*;
+use crate::photofs::*;
 
 mod rust_filesystem;
-use rust_filesystem::RustFilesystemReal;
+use crate::rust_filesystem::RustFilesystemReal;
 
 const CLIENT_SECRET: &str = include_str!("../client_secret.json");
 
-fn main() {
+fn main() -> Result<(), PhotoOxideError> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("photooxide=info,photooxide::db::debug,photooxide::photofs=error,photooxide::photolib=debug")).init();
     info!("Logging init");
 
-    let db = Arc::new(SqliteDb::from_path("cache.sqlite").unwrap());
+    let db = Arc::new(SqliteDb::from_path("cache.sqlite")?);
 
     let auth;
     {
@@ -100,7 +102,7 @@ fn main() {
     let mut scheduled_tasks: Vec<(&str, scheduled_executor::executor::TaskHandle)> = Vec::new();
     if env::var("PHOTOOXIDE_DISABLE_REFRESH").is_err() {
         executor = scheduled_executor::ThreadPoolExecutor::new(2).unwrap();
-        let updaters: Vec<Box<BackgroundUpdate>> = vec![
+        let updaters: Vec<Box<dyn BackgroundUpdate>> = vec![
             Box::new(BackgroundAlbumUpdate {
                 remote_photo_lib: remote_photo_lib.clone(),
                 db: db.clone(),
@@ -155,4 +157,6 @@ fn main() {
         debug!("Task {:?} stopped", task.0);
     }
     info!("...stopped background tasks");
+
+    Result::Ok(())
 }
