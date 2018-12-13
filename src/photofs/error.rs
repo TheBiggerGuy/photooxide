@@ -1,4 +1,5 @@
 use std::convert::From;
+use std::fmt;
 
 use rusqlite;
 
@@ -30,5 +31,33 @@ impl From<PhotoFsError> for FuseError {
 impl From<DbError> for FuseError {
     fn from(_error: DbError) -> Self {
         FuseError::FunctionNotImplemented
+    }
+}
+
+impl std::error::Error for PhotoFsError {}
+
+impl fmt::Display for PhotoFsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PhotoFsError::SqlError(err) => write!(f, "PhotoFsError: SqlError({:?})", err),
+            PhotoFsError::LockingError => write!(f, "PhotoFsError: LockingError"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn photo_fs_error_display() {
+        assert_eq!(
+            format!(
+                "{}",
+                PhotoFsError::from(DbError::SqlError(rusqlite::Error::SqliteSingleThreadedMode))
+            ),
+            "PhotoFsError: SqlError(SqliteSingleThreadedMode)"
+        );
+        assert_eq!(format!("{}", PhotoFsError::LockingError), "PhotoFsError: LockingError");
     }
 }

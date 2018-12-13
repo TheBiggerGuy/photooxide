@@ -1,5 +1,6 @@
 use std;
 use std::convert::From;
+use std::fmt;
 
 use crate::photoslibrary1;
 use hyper;
@@ -27,5 +28,26 @@ impl From<hyper::error::Error> for RemotePhotoLibError {
 impl From<photoslibrary1::Error> for RemotePhotoLibError {
     fn from(error: photoslibrary1::Error) -> RemotePhotoLibError {
         RemotePhotoLibError::GoogleBackendError(error)
+    }
+}
+
+impl std::error::Error for RemotePhotoLibError {}
+
+impl fmt::Display for RemotePhotoLibError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RemotePhotoLibError::GoogleBackendError(err) => {
+                write!(f, "RemotePhotoLibError: GoogleBackendError({:?})", err)
+            }
+            RemotePhotoLibError::HttpClientError(err) => {
+                write!(f, "RemotePhotoLibError: HttpClientError({:?})", err)
+            }
+            RemotePhotoLibError::HttpApiError(err) => {
+                write!(f, "RemotePhotoLibError: HttpApiError({:?})", err)
+            }
+            RemotePhotoLibError::IoError(err) => {
+                write!(f, "RemotePhotoLibError: IoError({:?})", err)
+            }
+        }
     }
 }
