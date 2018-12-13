@@ -64,3 +64,5 @@ jobs:
             kcov --exclude-pattern='/.cargo,/usr/lib' --verify "target/cov/$(basename $file)" "${file}";
           done
         - bash <(curl -s https://codecov.io/bash) -F "${TRAVIS_RUST_VERSION}"
+
+cache: cargo
