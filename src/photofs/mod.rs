@@ -589,9 +589,9 @@ mod test {
     use crate::db::{PhotoDb, SqliteDb};
 
     #[test]
-    fn lookup_root() {
+    fn lookup_root() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
@@ -605,45 +605,42 @@ mod test {
         }
 
         {
-            let response = fs
-                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("albums"))
-                .unwrap();
+            let response =
+                fs.lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("albums"))?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
             assert_eq!(response.attr.kind, FileType::Directory);
         }
 
         {
-            let response = fs
-                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("media"))
-                .unwrap();
+            let response = fs.lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("media"))?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_MEDIA);
             assert_eq!(response.attr.kind, FileType::Directory);
         }
 
         {
-            let response = fs
-                .lookup(
-                    &TestUniqRequest {},
-                    FIXED_INODE_ROOT,
-                    OsStr::new("hello.txt"),
-                )
-                .unwrap();
+            let response = fs.lookup(
+                &TestUniqRequest {},
+                FIXED_INODE_ROOT,
+                OsStr::new("hello.txt"),
+            )?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
             assert_eq!(response.attr.kind, FileType::RegularFile);
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn getattr_static() {
+    fn getattr_static() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
-            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ROOT).unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ROOT)?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_ROOT);
             assert_eq!(response.attr.kind, FileType::Directory);
@@ -651,7 +648,7 @@ mod test {
         }
 
         {
-            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ALBUMS).unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_ALBUMS)?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
             assert_eq!(response.attr.kind, FileType::Directory);
@@ -659,7 +656,7 @@ mod test {
         }
 
         {
-            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_MEDIA).unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_MEDIA)?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_MEDIA);
             assert_eq!(response.attr.kind, FileType::Directory);
@@ -667,20 +664,20 @@ mod test {
         }
 
         {
-            let response = fs
-                .getattr(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD)
-                .unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD)?;
 
             assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
             assert_eq!(response.attr.kind, FileType::RegularFile);
             assert_eq!(response.attr.size, 13);
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn getattr_dynamic() {
+    fn getattr_dynamic() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -690,7 +687,7 @@ mod test {
         let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
 
         {
-            let response = fs.getattr(&TestUniqRequest {}, media_item_inode).unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, media_item_inode)?;
 
             assert_eq!(response.attr.ino, media_item_inode);
             assert_eq!(response.attr.kind, FileType::RegularFile);
@@ -698,7 +695,7 @@ mod test {
         }
 
         {
-            let response = fs.getattr(&TestUniqRequest {}, album_inode).unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, album_inode)?;
 
             assert_eq!(response.attr.ino, album_inode);
             assert_eq!(response.attr.kind, FileType::Directory);
@@ -714,27 +711,24 @@ mod test {
             .unwrap();
 
         {
-            let response = fs.getattr(&TestUniqRequest {}, album_inode).unwrap();
+            let response = fs.getattr(&TestUniqRequest {}, album_inode)?;
 
             assert_eq!(response.attr.size, 1);
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn open_read_release_hello_txt() {
+    fn open_read_release_hello_txt() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let fh = fs
-            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
-            .unwrap()
-            .fh;
+        let fh = fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?.fh;
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 0, 13)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 0, 13)?;
 
             assert_eq!(response.data, b"Hello World!\n");
         }
@@ -749,86 +743,73 @@ mod test {
                 false
             )
             .is_ok());
+
+        Result::Ok(())
     }
 
     #[test]
-    fn read_offset() {
+    fn read_offset() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let fh = fs
-            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
-            .unwrap()
-            .fh;
+        let fh = fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?.fh;
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 0, 13)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 0, 13)?;
             assert_eq!(response.data, b"Hello World!\n");
         }
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 1, 12)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 1, 12)?;
             assert_eq!(response.data, b"ello World!\n");
         }
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 12, 1)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 12, 1)?;
             assert_eq!(response.data, b"\n");
         }
 
         // Offset past the end of the file
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 13, 1)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, fh, 13, 1)?;
             assert_eq!(response.data, b"");
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn read_size() {
+    fn read_size() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let open = fs
-            .open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)
-            .unwrap();
+        let open = fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?;
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 13)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 13)?;
             assert_eq!(response.data, b"Hello World!\n");
         }
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 5)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 5)?;
             assert_eq!(response.data, b"Hello");
         }
 
         {
-            let response = fs
-                .read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 15)
-                .unwrap();
+            let response = fs.read(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, open.fh, 0, 15)?;
             assert_eq!(response.data, b"Hello World!\n");
             assert_eq!(open.flags, 1); // assert direct IO or the response should be zero padded
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn read_media_item() {
+    fn read_media_item() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let inode: Inode;
@@ -845,14 +826,14 @@ mod test {
 
         // read real file
         {
-            let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
-            let response = fs.read(&TestUniqRequest {}, inode, open.fh, 0, 5).unwrap();
+            let open = fs.open(&TestUniqRequest {}, inode, 0)?;
+            let response = fs.read(&TestUniqRequest {}, inode, open.fh, 0, 5)?;
             assert_eq!(response.data, b"ABC");
         }
 
         // read unknown inode or fh
         {
-            let open = fs.open(&TestUniqRequest {}, inode, 0).unwrap();
+            let open = fs.open(&TestUniqRequest {}, inode, 0)?;
             assert!(fs
                 .read(&TestUniqRequest {}, inode + 1, open.fh, 0, 5)
                 .is_err());
@@ -860,57 +841,51 @@ mod test {
                 .read(&TestUniqRequest {}, inode, open.fh + 1, 0, 5)
                 .is_err());
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn opendir_multiple_calls() {
+    fn opendir_multiple_calls() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let response1 = fs
-            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
-            .unwrap();
-        let response2 = fs
-            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
-            .unwrap();
+        let response1 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
+        let response2 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
 
         assert_eq!(response1.fh, FIXED_INODE_ROOT);
         assert_eq!(response2.fh, FIXED_INODE_ROOT + 1);
+
+        Result::Ok(())
     }
 
     #[test]
-    fn readdir_root() {
+    fn readdir_root() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let fh = fs
-            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
-            .unwrap()
-            .fh;
+        let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?.fh;
 
-        let response = fs
-            .readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
-            .unwrap();
+        let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)?;
 
         assert_eq!(response.entries.len(), 4);
         assert_eq!(response.entries[0].ino, FIXED_INODE_ROOT);
         assert_eq!(response.entries[1].ino, FIXED_INODE_ALBUMS);
         assert_eq!(response.entries[2].ino, FIXED_INODE_MEDIA);
         assert_eq!(response.entries[3].ino, FIXED_INODE_HELLO_WORLD);
+
+        Result::Ok(())
     }
 
     #[test]
-    fn readdir_invalid_inode_or_fh() {
+    fn readdir_invalid_inode_or_fh() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let fh = fs
-            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
-            .unwrap()
-            .fh;
+        let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?.fh;
 
         {
             assert!(fs
@@ -922,31 +897,34 @@ mod test {
                 .readdir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh + 1, 0)
                 .is_err());
         }
+
+        Result::Ok(())
     }
 
     #[test]
-    fn releasedir_no_previous_opendir() {
+    fn releasedir_no_previous_opendir() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         assert!(fs.releasedir(&TestUniqRequest {}, 1, 0, 0).is_err());
+
+        Result::Ok(())
     }
 
     #[test]
-    fn releasedir_from_previous_opendir() {
+    fn releasedir_from_previous_opendir() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = build_test_db();
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
-        let fh = fs
-            .opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)
-            .unwrap()
-            .fh;
+        let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?.fh;
 
         assert!(fs
             .releasedir(&TestUniqRequest {}, FIXED_INODE_ROOT, fh, 0)
             .is_ok());
+
+        Result::Ok(())
     }
 
     #[derive(Debug)]
@@ -993,9 +971,5 @@ mod test {
                 )),
             }
         }
-    }
-
-    fn build_test_db() -> Arc<SqliteDb> {
-        Arc::new(SqliteDb::in_memory().unwrap())
     }
 }

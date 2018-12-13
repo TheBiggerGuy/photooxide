@@ -62,10 +62,12 @@ mod test {
     use super::*;
 
     #[test]
-    fn sqlitedb_next_inode() {
-        let db = SqliteDb::in_memory().unwrap();
+    fn sqlitedb_next_inode() -> Result<(), DbError> {
+        let db = SqliteDb::in_memory()?;
 
-        assert_eq!(db.get_and_update_inode().unwrap(), 101);
-        assert_eq!(db.get_and_update_inode().unwrap(), 102);
+        assert_eq!(db.get_and_update_inode()?, 101);
+        assert_eq!(db.get_and_update_inode()?, 102);
+
+        Result::Ok(())
     }
 }
