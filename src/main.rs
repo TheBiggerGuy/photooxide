@@ -29,7 +29,9 @@ use std::ffi::OsStr;
 use std::option::Option;
 use std::sync::{Arc, Mutex};
 
-use crate::oauth2::{Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType};
+use crate::oauth2::{
+    Authenticator, ConsoleApplicationSecret, DefaultAuthenticatorDelegate, FlowType,
+};
 use crate::photoslibrary1::PhotosLibrary;
 
 mod background_update;

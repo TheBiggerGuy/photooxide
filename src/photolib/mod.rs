@@ -4,9 +4,9 @@ use std::io::Read;
 use std::option::Option;
 use std::result::Result;
 
-use hyper;
 use crate::oauth2;
 use crate::photoslibrary1::{PhotosLibrary, SearchMediaItemsRequest};
+use hyper;
 
 use crate::domain::*;
 
