@@ -634,6 +634,47 @@ mod test {
     }
 
     #[test]
+    fn lookup_albums() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        {
+            let response = fs
+                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("albums"))
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        {
+            assert!(fs
+                .lookup(
+                    &TestUniqRequest {},
+                    FIXED_INODE_ALBUMS,
+                    OsStr::new("not_a_album")
+                )
+                .is_err());
+        }
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+        let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
+        {
+            let response = fs.lookup(
+                &TestUniqRequest {},
+                FIXED_INODE_ALBUMS,
+                OsStr::new("Album1"),
+            )?;
+
+            assert_eq!(response.attr.ino, album_inode);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
     fn getattr_static() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(SqliteDb::in_memory()?);
