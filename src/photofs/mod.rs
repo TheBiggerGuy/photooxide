@@ -12,7 +12,7 @@ use crate::rust_filesystem::{
     ReadDirResponse, ReadResponse,
 };
 
-use crate::db::PhotoDbRo;
+use crate::db::{Filter, PhotoDbRo};
 use crate::domain::{Inode, MediaTypes, PhotoDbAlbum};
 use crate::photolib::*;
 use crate::rust_filesystem::{RustFilesystem, UniqRequest};
@@ -140,22 +140,17 @@ where
         }
     }
 
-    // TODO: Check photo by name is actually in that album
-    fn lookup_media_items_in_album(
-        &mut self,
-        _req: &dyn UniqRequest,
-        name: &OsStr,
-    ) -> FuseResult<FileEntryResponse<'_>> {
-        self.lookup_media(_req, name)
-    }
-
     fn lookup_media(
         &mut self,
         _req: &dyn UniqRequest,
         name: &OsStr,
+        filter: Filter,
     ) -> FuseResult<FileEntryResponse<'_>> {
         let name = name.to_str().unwrap();
-        match self.photo_db.media_item_by_name(&String::from(name)) {
+        match self
+            .photo_db
+            .media_item_by_name(&String::from(name), filter)
+        {
             Ok(Option::Some(media_item)) => Result::Ok(FileEntryResponse {
                 ttl: &TTL,
                 attr: make_atr(
@@ -286,9 +281,11 @@ where
         match parent {
             FIXED_INODE_ROOT => self.lookup_root(req, name),
             FIXED_INODE_ALBUMS => self.lookup_albums(req, name),
-            FIXED_INODE_MEDIA => self.lookup_media(req, name),
+            FIXED_INODE_MEDIA => self.lookup_media(req, name, Filter::NoFilter),
             _ => match self.photo_db.album_by_inode(parent) {
-                Ok(Option::Some(_)) => self.lookup_media_items_in_album(req, name),
+                Ok(Option::Some(album)) => {
+                    self.lookup_media(req, name, Filter::ByAlbum(album.google_id()))
+                }
                 Ok(Option::None) => {
                     warn!(
                         "FS lookup: Failed to find a FileAttr for inode={} (name={:?})",
@@ -669,6 +666,46 @@ mod test {
 
             assert_eq!(response.attr.ino, album_inode);
             assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn lookup_media_item_in_album() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+        let media_item_inode = photo_db
+            .upsert_media_item("GoogleId1", "Photo1.jpg", &now)
+            .unwrap();
+        let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
+
+        // Empty album
+        {
+            let response = fs.lookup(&TestUniqRequest {}, album_inode, OsStr::new("Photo1.jpg"));
+
+            assert!(response.is_err());
+        }
+
+        // Correct lookup
+        photo_db
+            .upsert_media_item_in_album("GoogleId2", "GoogleId1")
+            .unwrap();
+        {
+            let response = fs.lookup(&TestUniqRequest {}, album_inode, OsStr::new("Photo1.jpg"))?;
+
+            assert_eq!(response.attr.ino, media_item_inode);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+
+        // Incorrect lookup
+        {
+            let response = fs.lookup(&TestUniqRequest {}, album_inode, OsStr::new("Photo2.jpg"));
+
+            assert!(response.is_err());
         }
 
         Result::Ok(())
