@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 google-photoslibrary1 = { git = "https://github.com/TheBiggerGuy/google-apis-rs", branch = "photoslibrary_str_int" }
 fuse = "0.3.1"
-hyper = "0.10"
+hyper = "0.12"
 hyper-rustls = "0.6"
 yup-oauth2 = "1.0"
 serde = "1.0"
