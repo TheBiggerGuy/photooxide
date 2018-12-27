@@ -27,6 +27,12 @@ pub use self::token_storage_db::TokenStorageDb;
 mod table_name;
 use self::table_name::TableName;
 
+#[derive(Debug)]
+pub enum Filter<'a> {
+    NoFilter,
+    ByAlbum(&'a GoogleId),
+}
+
 pub trait PhotoDbRo: Sized {
     // Listings
     fn media_items(&self) -> Result<Vec<PhotoDbMediaItem>, DbError>;
@@ -35,7 +41,11 @@ pub trait PhotoDbRo: Sized {
     fn media_items_in_album_length(&self, inode: Inode) -> Result<usize, DbError>;
 
     // Single items
-    fn media_item_by_name(&self, name: &str) -> Result<Option<PhotoDbMediaItem>, DbError>;
+    fn media_item_by_name(
+        &self,
+        name: &str,
+        filter: Filter,
+    ) -> Result<Option<PhotoDbMediaItem>, DbError>;
     fn media_item_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbMediaItem>, DbError>;
     fn album_by_name(&self, name: &str) -> Result<Option<PhotoDbAlbum>, DbError>;
     fn album_by_inode(&self, inode: Inode) -> Result<Option<PhotoDbAlbum>, DbError>;
@@ -248,12 +258,27 @@ impl PhotoDbRo for SqliteDb {
         }
     }
 
-    fn media_item_by_name(&self, name: &str) -> Result<Option<PhotoDbMediaItem>, DbError> {
+    fn media_item_by_name(
+        &self,
+        name: &str,
+        filter: Filter,
+    ) -> Result<Option<PhotoDbMediaItem>, DbError> {
         let db = self.db.lock()?;
-        let result: Result<PhotoDbMediaItem, rusqlite::Error> = db.query_row(
+
+        let result: Result<PhotoDbMediaItem, rusqlite::Error> = match filter {
+            Filter::ByAlbum(album_id) => {
+                db.query_row(
+            &format!("SELECT item.google_id, item.type, item.name, item.last_remote_check, item.inode FROM '{}' AS item JOIN '{}' AS album ON item.google_id = album.media_item_google_id WHERE item.type = '{}' AND item.name = ? AND album.album_google_id = ?;", TableName::AlbumsAndMediaItems, TableName::MediaItemsInAlbum, MediaTypes::MediaItem),
+            &[&name as &dyn ToSql, &album_id], row_to_media_item,
+        )
+            }
+            Filter::NoFilter => {
+                db.query_row(
             &format!("SELECT google_id, type, name, last_remote_check, inode FROM '{}' WHERE type = '{}' AND name = ?;", TableName::AlbumsAndMediaItems, MediaTypes::MediaItem),
             &[&name], row_to_media_item,
-        );
+        )
+            }
+        };
         match result {
             Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(Option::None),
             Err(error) => Result::Err(DbError::from(error)),
@@ -746,7 +771,7 @@ mod test {
 
         // Assert when DB is empty
         assert!(db.media_item_by_inode(100)?.is_none());
-        assert!(db.media_item_by_name("foo")?.is_none());
+        assert!(db.media_item_by_name("foo", Filter::NoFilter)?.is_none());
 
         // insert some data
         let inode1 =
@@ -756,7 +781,7 @@ mod test {
 
         // Lookup by name and inode are equal
         let by_inode = db.media_item_by_inode(inode1)?.unwrap();
-        let by_name = db.media_item_by_name("Title 1")?.unwrap();
+        let by_name = db.media_item_by_name("Title 1", Filter::NoFilter)?.unwrap();
         assert_eq!(by_inode.google_id(), "GoogleId1");
         assert_eq!(by_inode, by_name);
 
@@ -771,11 +796,15 @@ mod test {
         );
 
         assert_eq!(
-            db.media_item_by_name("Title 1")?.unwrap().google_id(),
+            db.media_item_by_name("Title 1", Filter::NoFilter)?
+                .unwrap()
+                .google_id(),
             "GoogleId1"
         );
         assert_eq!(
-            db.media_item_by_name("Title 2")?.unwrap().google_id(),
+            db.media_item_by_name("Title 2", Filter::NoFilter)?
+                .unwrap()
+                .google_id(),
             "GoogleId2"
         );
 

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::From;
 use std::ffi::OsStr;
@@ -12,7 +11,7 @@ use crate::rust_filesystem::{
     ReadDirResponse, ReadResponse,
 };
 
-use crate::db::PhotoDbRo;
+use crate::db::{Filter, PhotoDbRo};
 use crate::domain::{Inode, MediaTypes, PhotoDbAlbum};
 use crate::photolib::*;
 use crate::rust_filesystem::{RustFilesystem, UniqRequest};
@@ -21,7 +20,7 @@ mod error;
 pub use self::error::PhotoFsError;
 
 mod utils;
-use self::utils::make_atr;
+use self::utils::{make_atr, OpenFileHandles};
 
 const FIXED_INODE_ROOT: u64 = fuse::FUSE_ROOT_ID;
 const FIXED_INODE_ALBUMS: u64 = 2;
@@ -55,8 +54,8 @@ where
 {
     photo_lib: Arc<Mutex<X>>,
     photo_db: Arc<Y>,
-    open_files: HashMap<u64, ReadFhEntry>,
-    open_dirs: HashMap<u64, ReadDirFhEntry>,
+    open_files: OpenFileHandles<ReadFhEntry>,
+    open_dirs: OpenFileHandles<ReadDirFhEntry>,
 }
 
 impl<X, Y> PhotoFs<X, Y>
@@ -68,8 +67,8 @@ where
         PhotoFs {
             photo_lib,
             photo_db,
-            open_files: HashMap::new(),
-            open_dirs: HashMap::new(),
+            open_files: OpenFileHandles::new(),
+            open_dirs: OpenFileHandles::new(),
         }
     }
 
@@ -140,22 +139,17 @@ where
         }
     }
 
-    // TODO: Check photo by name is actually in that album
-    fn lookup_media_items_in_album(
-        &mut self,
-        _req: &dyn UniqRequest,
-        name: &OsStr,
-    ) -> FuseResult<FileEntryResponse<'_>> {
-        self.lookup_media(_req, name)
-    }
-
     fn lookup_media(
         &mut self,
         _req: &dyn UniqRequest,
         name: &OsStr,
+        filter: Filter,
     ) -> FuseResult<FileEntryResponse<'_>> {
         let name = name.to_str().unwrap();
-        match self.photo_db.media_item_by_name(&String::from(name)) {
+        match self
+            .photo_db
+            .media_item_by_name(&String::from(name), filter)
+        {
             Ok(Option::Some(media_item)) => Result::Ok(FileEntryResponse {
                 ttl: &TTL,
                 attr: make_atr(
@@ -286,9 +280,11 @@ where
         match parent {
             FIXED_INODE_ROOT => self.lookup_root(req, name),
             FIXED_INODE_ALBUMS => self.lookup_albums(req, name),
-            FIXED_INODE_MEDIA => self.lookup_media(req, name),
+            FIXED_INODE_MEDIA => self.lookup_media(req, name, Filter::NoFilter),
             _ => match self.photo_db.album_by_inode(parent) {
-                Ok(Option::Some(_)) => self.lookup_media_items_in_album(req, name),
+                Ok(Option::Some(album)) => {
+                    self.lookup_media(req, name, Filter::ByAlbum(album.google_id()))
+                }
                 Ok(Option::None) => {
                     warn!(
                         "FS lookup: Failed to find a FileAttr for inode={} (name={:?})",
@@ -401,16 +397,8 @@ where
             }
         }
 
-        let mut fh = ino;
-        loop {
-            if self.open_files.contains_key(&fh) {
-                fh += 1;
-            } else {
-                break;
-            }
-        }
+        let fh = self.open_files.open(ReadFhEntry::new(ino, file_data));
 
-        self.open_files.insert(fh, ReadFhEntry::new(ino, file_data));
         Result::Ok(OpenResponse {
             fh,
             flags: fuse::consts::FOPEN_DIRECT_IO,
@@ -428,7 +416,7 @@ where
         let offset = offset as usize;
         debug!("FS read: ino={}, offset={} size={}", ino, offset, size);
 
-        match self.open_files.get(&fh) {
+        match self.open_files.get(fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(entry) => {
                 if entry.inode != ino {
@@ -463,7 +451,7 @@ where
     ) -> FuseResult<()> {
         debug!("FS release: ino={}, fh={}", ino, fh);
 
-        match self.open_files.remove(&fh) {
+        match self.open_files.remove(fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(_) => Result::Ok(()),
         }
@@ -500,17 +488,8 @@ where
         }?;
 
         let entries = self.opendir_entries(ino, &album_for_inode);
+        let fh = self.open_dirs.open(ReadDirFhEntry::new(ino, entries));
 
-        let mut fh = ino;
-        loop {
-            if self.open_dirs.contains_key(&fh) {
-                fh += 1;
-            } else {
-                break;
-            }
-        }
-
-        self.open_dirs.insert(fh, ReadDirFhEntry::new(ino, entries));
         Result::Ok(OpenResponse { fh, flags: 0 }) // TODO: Flags
     }
 
@@ -523,7 +502,7 @@ where
     ) -> FuseResult<ReadDirResponse<'_>> {
         debug!("FS readdir: ino={}, offset={}", ino, offset);
 
-        let fh_entry = match self.open_dirs.get(&fh) {
+        let fh_entry = match self.open_dirs.get(fh) {
             None => return Result::Err(FuseError::FunctionNotImplemented),
             Some(entry) => entry,
         };
@@ -567,7 +546,7 @@ where
     ) -> FuseResult<()> {
         debug!("FS releasedir: ino={}, fh={}", ino, fh);
 
-        match self.open_dirs.remove(&fh) {
+        match self.open_dirs.remove(fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(_) => Result::Ok(()),
         }
@@ -578,6 +557,7 @@ where
 mod test {
     use super::*;
 
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     use hyper;
@@ -628,6 +608,87 @@ mod test {
 
             assert_eq!(response.attr.ino, FIXED_INODE_HELLO_WORLD);
             assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn lookup_albums() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        {
+            let response = fs
+                .lookup(&TestUniqRequest {}, FIXED_INODE_ROOT, OsStr::new("albums"))
+                .unwrap();
+
+            assert_eq!(response.attr.ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        {
+            assert!(fs
+                .lookup(
+                    &TestUniqRequest {},
+                    FIXED_INODE_ALBUMS,
+                    OsStr::new("not_a_album")
+                )
+                .is_err());
+        }
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+        let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
+        {
+            let response = fs.lookup(
+                &TestUniqRequest {},
+                FIXED_INODE_ALBUMS,
+                OsStr::new("Album1"),
+            )?;
+
+            assert_eq!(response.attr.ino, album_inode);
+            assert_eq!(response.attr.kind, FileType::Directory);
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn lookup_media_item_in_album() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+        let media_item_inode = photo_db
+            .upsert_media_item("GoogleId1", "Photo1.jpg", &now)
+            .unwrap();
+        let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
+
+        // Empty album
+        {
+            let response = fs.lookup(&TestUniqRequest {}, album_inode, OsStr::new("Photo1.jpg"));
+
+            assert!(response.is_err());
+        }
+
+        // Correct lookup
+        photo_db
+            .upsert_media_item_in_album("GoogleId2", "GoogleId1")
+            .unwrap();
+        {
+            let response = fs.lookup(&TestUniqRequest {}, album_inode, OsStr::new("Photo1.jpg"))?;
+
+            assert_eq!(response.attr.ino, media_item_inode);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+
+        // Incorrect lookup
+        {
+            let response = fs.lookup(&TestUniqRequest {}, album_inode, OsStr::new("Photo2.jpg"));
+
+            assert!(response.is_err());
         }
 
         Result::Ok(())
@@ -854,8 +915,8 @@ mod test {
         let response1 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
         let response2 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
 
-        assert_eq!(response1.fh, FIXED_INODE_ROOT);
-        assert_eq!(response2.fh, FIXED_INODE_ROOT + 1);
+        assert_eq!(response1.fh, 0);
+        assert_eq!(response2.fh, 1);
 
         Result::Ok(())
     }

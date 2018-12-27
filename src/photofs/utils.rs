@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use users;
 
 use fuse::{FileAttr, FileType};
@@ -29,6 +31,42 @@ pub fn make_atr(inode: Inode, size: usize, file_type: FileType) -> FileAttr {
     }
 }
 
+// TODO: Global fh
+#[derive(Debug)]
+pub struct OpenFileHandles<X> {
+    fhs: HashMap<u64, X>,
+}
+
+impl<X> OpenFileHandles<X> {
+    pub fn new() -> OpenFileHandles<X> {
+        OpenFileHandles {
+            fhs: HashMap::new(),
+        }
+    }
+
+    pub fn open(&mut self, x: X) -> u64 {
+        let mut fh = 0;
+        loop {
+            if self.fhs.contains_key(&fh) {
+                fh += 1;
+            } else {
+                break;
+            }
+        }
+        self.fhs.insert(fh, x);
+
+        fh
+    }
+
+    pub fn get(&self, fh: u64) -> Option<&X> {
+        self.fhs.get(&fh)
+    }
+
+    pub fn remove(&mut self, fh: u64) -> Option<X> {
+        self.fhs.remove(&fh)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -50,5 +88,31 @@ mod test {
             make_atr(100, 1, FileType::Directory).kind,
             FileType::Directory
         );
+    }
+
+    #[test]
+    fn open_file_handles_test() {
+        let mut ofs: OpenFileHandles<u8> = OpenFileHandles::new();
+
+        assert!(ofs.get(0).is_none());
+        assert!(ofs.remove(0).is_none());
+
+        assert_eq!(ofs.open(0), 0);
+        assert_eq!(ofs.get(0).unwrap(), &0);
+
+        assert_eq!(ofs.open(1), 1);
+        assert_eq!(ofs.get(1).unwrap(), &1);
+
+        assert_eq!(ofs.remove(0).unwrap(), 0);
+        assert!(ofs.get(0).is_none());
+        assert!(ofs.get(1).is_some());
+        assert_eq!(ofs.open(0), 0);
+
+        assert_eq!(ofs.remove(1).unwrap(), 1);
+        assert!(ofs.get(0).is_some());
+        assert!(ofs.get(1).is_none());
+        assert_eq!(ofs.open(1), 1);
+
+        assert_eq!(ofs.open(2), 2);
     }
 }
