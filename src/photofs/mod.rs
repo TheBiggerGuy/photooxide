@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::convert::From;
 use std::ffi::OsStr;
@@ -21,7 +20,7 @@ mod error;
 pub use self::error::PhotoFsError;
 
 mod utils;
-use self::utils::make_atr;
+use self::utils::{make_atr, OpenFileHandles};
 
 const FIXED_INODE_ROOT: u64 = fuse::FUSE_ROOT_ID;
 const FIXED_INODE_ALBUMS: u64 = 2;
@@ -55,8 +54,8 @@ where
 {
     photo_lib: Arc<Mutex<X>>,
     photo_db: Arc<Y>,
-    open_files: HashMap<u64, ReadFhEntry>,
-    open_dirs: HashMap<u64, ReadDirFhEntry>,
+    open_files: OpenFileHandles<ReadFhEntry>,
+    open_dirs: OpenFileHandles<ReadDirFhEntry>,
 }
 
 impl<X, Y> PhotoFs<X, Y>
@@ -68,8 +67,8 @@ where
         PhotoFs {
             photo_lib,
             photo_db,
-            open_files: HashMap::new(),
-            open_dirs: HashMap::new(),
+            open_files: OpenFileHandles::new(),
+            open_dirs: OpenFileHandles::new(),
         }
     }
 
@@ -398,16 +397,8 @@ where
             }
         }
 
-        let mut fh = ino;
-        loop {
-            if self.open_files.contains_key(&fh) {
-                fh += 1;
-            } else {
-                break;
-            }
-        }
+        let fh = self.open_files.open(ReadFhEntry::new(ino, file_data));
 
-        self.open_files.insert(fh, ReadFhEntry::new(ino, file_data));
         Result::Ok(OpenResponse {
             fh,
             flags: fuse::consts::FOPEN_DIRECT_IO,
@@ -425,7 +416,7 @@ where
         let offset = offset as usize;
         debug!("FS read: ino={}, offset={} size={}", ino, offset, size);
 
-        match self.open_files.get(&fh) {
+        match self.open_files.get(fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(entry) => {
                 if entry.inode != ino {
@@ -460,7 +451,7 @@ where
     ) -> FuseResult<()> {
         debug!("FS release: ino={}, fh={}", ino, fh);
 
-        match self.open_files.remove(&fh) {
+        match self.open_files.remove(fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(_) => Result::Ok(()),
         }
@@ -497,17 +488,8 @@ where
         }?;
 
         let entries = self.opendir_entries(ino, &album_for_inode);
+        let fh = self.open_dirs.open(ReadDirFhEntry::new(ino, entries));
 
-        let mut fh = ino;
-        loop {
-            if self.open_dirs.contains_key(&fh) {
-                fh += 1;
-            } else {
-                break;
-            }
-        }
-
-        self.open_dirs.insert(fh, ReadDirFhEntry::new(ino, entries));
         Result::Ok(OpenResponse { fh, flags: 0 }) // TODO: Flags
     }
 
@@ -520,7 +502,7 @@ where
     ) -> FuseResult<ReadDirResponse<'_>> {
         debug!("FS readdir: ino={}, offset={}", ino, offset);
 
-        let fh_entry = match self.open_dirs.get(&fh) {
+        let fh_entry = match self.open_dirs.get(fh) {
             None => return Result::Err(FuseError::FunctionNotImplemented),
             Some(entry) => entry,
         };
@@ -564,7 +546,7 @@ where
     ) -> FuseResult<()> {
         debug!("FS releasedir: ino={}, fh={}", ino, fh);
 
-        match self.open_dirs.remove(&fh) {
+        match self.open_dirs.remove(fh) {
             None => Result::Err(FuseError::FunctionNotImplemented),
             Some(_) => Result::Ok(()),
         }
@@ -575,6 +557,7 @@ where
 mod test {
     use super::*;
 
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     use hyper;
@@ -932,8 +915,8 @@ mod test {
         let response1 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
         let response2 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
 
-        assert_eq!(response1.fh, FIXED_INODE_ROOT);
-        assert_eq!(response2.fh, FIXED_INODE_ROOT + 1);
+        assert_eq!(response1.fh, 0);
+        assert_eq!(response2.fh, 1);
 
         Result::Ok(())
     }
