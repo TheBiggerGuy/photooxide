@@ -1,8 +1,16 @@
 [package]
 name = "photooxide"
 version = "0.1.0"
-authors = ["Guy Taylor <thebigguy.co.uk@gmail.com>"]
+
+# Rust version
 edition = "2018"
+
+# Metadata
+authors = ["Guy Taylor <thebigguy.co.uk@gmail.com>"]
+homepage = "https://github.com/TheBiggerGuy/photooxide"
+repository = "https://github.com/TheBiggerGuy/photooxide"
+readme = "README.md"
+license = "MIT"
 
 [dependencies]
 google-photoslibrary1 = { git = "https://github.com/TheBiggerGuy/google-apis-rs", branch = "photoslibrary_str_int" }
@@ -21,7 +29,8 @@ chrono = "0.4"
 users = "0.8"
 scheduled-executor = "0.4"
 derive-new = "0.5"
+rusqlite = { version = "0.16.0", features = ["bundled"] }
 
-[dependencies.rusqlite]
-version = "0.16.0"
-features = ["bundled"]
+[badges]
+travis-ci = { repository = "TheBiggerGuy/photooxide" }
+codecov = { repository = "TheBiggerGuy/photooxide", service = "github" }
