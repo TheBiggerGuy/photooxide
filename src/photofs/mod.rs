@@ -655,6 +655,54 @@ mod test {
     }
 
     #[test]
+    fn lookup_media_items() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        // Empty
+        {
+            let response = fs.lookup(
+                &TestUniqRequest {},
+                FIXED_INODE_MEDIA,
+                OsStr::new("Photo1.jpg"),
+            );
+
+            assert!(response.is_err());
+        }
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+        let media_item_inode = photo_db
+            .upsert_media_item("GoogleId1", "Photo1.jpg", &now)
+            .unwrap();
+
+        // Correct lookup
+        {
+            let response = fs.lookup(
+                &TestUniqRequest {},
+                FIXED_INODE_MEDIA,
+                OsStr::new("Photo1.jpg"),
+            )?;
+
+            assert_eq!(response.attr.ino, media_item_inode);
+            assert_eq!(response.attr.kind, FileType::RegularFile);
+        }
+
+        // Incorrect lookup
+        {
+            let response = fs.lookup(
+                &TestUniqRequest {},
+                FIXED_INODE_MEDIA,
+                OsStr::new("Photo2.jpg"),
+            );
+
+            assert!(response.is_err());
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
     fn lookup_media_item_in_album() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
         let photo_db = Arc::new(SqliteDb::in_memory()?);
