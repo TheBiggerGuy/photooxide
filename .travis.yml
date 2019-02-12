@@ -30,7 +30,7 @@ stages:
   - name: coverage
 
 install:
-  - cargo install cargo-cache
+  - which cargo-cache || cargo install cargo-cache
 
 before_script:
   - mv client_secret.travis.json client_secret.json
