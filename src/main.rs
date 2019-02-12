@@ -6,7 +6,6 @@ extern crate derive_new;
 use env_logger;
 
 use fuse;
-use libc;
 
 use google_photoslibrary1 as photoslibrary1;
 use hyper;
@@ -14,10 +13,6 @@ use hyper_rustls;
 
 use serde_json;
 use yup_oauth2 as oauth2;
-
-use rusqlite;
-
-use users;
 
 use scheduled_executor;
 
