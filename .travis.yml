@@ -29,7 +29,9 @@ stages:
   - name: lint
   - name: coverage
 
-install: true
+install:
+  - cargo install cargo-cache
+
 before_script:
   - mv client_secret.travis.json client_secret.json
 
@@ -37,6 +39,9 @@ before_script:
 script: 
   - cargo build
   - cargo test
+
+before_cache:
+  - cargo cache --autoclean
 
 jobs:
   include:
