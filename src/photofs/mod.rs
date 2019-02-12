@@ -517,7 +517,7 @@ where
 
         let to_skip = if offset == 0 { offset } else { offset + 1 } as usize;
         let result_entries: Vec<ReadDirEntry<'_>> = (&fh_entry.entries)
-            .into_iter()
+            .iter()
             .enumerate()
             .skip(to_skip)
             .map(|(offset, entry)| {
