@@ -31,6 +31,7 @@ stages:
 
 install:
   - which cargo-cache || cargo install cargo-cache
+  - which cargo-audit || cargo install cargo-audit
 
 before_script:
   - mv client_secret.travis.json client_secret.json
@@ -53,6 +54,7 @@ jobs:
       script:
         - cargo fmt --all -- --check
         - cargo clippy --all-targets --all-features -- -D warnings
+        - cargo audit
 
     - stage: coverage
       if: os = linux
