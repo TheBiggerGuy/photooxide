@@ -1006,6 +1006,44 @@ mod test {
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
 
         {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_MEDIA, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+            assert_eq!(response.entries.len(), 2);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+        }
+
+        let media_item_inode = photo_db
+            .upsert_media_item(&String::from("GoogleId1"), &String::from("Photo 1"), &now)
+            .unwrap();
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_MEDIA, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+            assert_eq!(response.entries.len(), 3);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+            assert_eq!(response.entries[2].ino, media_item_inode);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn readdir_media_items() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        {
             let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, 0)?.fh;
 
             let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
