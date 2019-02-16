@@ -551,6 +551,15 @@ where
             Some(_) => Result::Ok(()),
         }
     }
+
+    fn destroy(&mut self, _req: &dyn UniqRequest) {
+        if !self.open_files.is_empty() {
+            warn!("FS destroy: destroying a filesytem with open files");
+        }
+        if !self.open_dirs.is_empty() {
+            warn!("FS destroy: destroying a filesytem with open dirs");
+        }
+    }
 }
 
 #[cfg(test)]

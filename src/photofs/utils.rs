@@ -65,6 +65,10 @@ impl<X> OpenFileHandles<X> {
     pub fn remove(&mut self, fh: u64) -> Option<X> {
         self.fhs.remove(&fh)
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.fhs.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -114,5 +118,18 @@ mod test {
         assert_eq!(ofs.open(1), 1);
 
         assert_eq!(ofs.open(2), 2);
+    }
+
+    #[test]
+    fn open_file_handles_is_empty() {
+        let mut ofs: OpenFileHandles<u8> = OpenFileHandles::new();
+
+        assert!(ofs.is_empty());
+
+        assert_eq!(ofs.open(0), 0);
+        assert_eq!(ofs.is_empty(), false);
+
+        assert_eq!(ofs.remove(0).unwrap(), 0);
+        assert!(ofs.is_empty());
     }
 }
