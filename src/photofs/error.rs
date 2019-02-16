@@ -55,6 +55,10 @@ mod test {
             format!("{}", PhotoFsError::PhotoDbError(DbError::LockingError)),
             "PhotoFsError: PhotoDbError(LockingError)"
         );
+        assert_eq!(
+            format!("{:?}", PhotoFsError::PhotoDbError(DbError::LockingError)),
+            "PhotoDbError(LockingError)"
+        );
     }
 
     #[test]
