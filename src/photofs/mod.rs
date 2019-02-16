@@ -551,6 +551,15 @@ where
             Some(_) => Result::Ok(()),
         }
     }
+
+    fn destroy(&mut self, _req: &dyn UniqRequest) {
+        if !self.open_files.is_empty() {
+            warn!("FS destroy: destroying a filesytem with open files");
+        }
+        if !self.open_dirs.is_empty() {
+            warn!("FS destroy: destroying a filesytem with open dirs");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -984,6 +993,121 @@ mod test {
         assert_eq!(response.entries[1].ino, FIXED_INODE_ALBUMS);
         assert_eq!(response.entries[2].ino, FIXED_INODE_MEDIA);
         assert_eq!(response.entries[3].ino, FIXED_INODE_HELLO_WORLD);
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn readdir_albums() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_MEDIA, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+            assert_eq!(response.entries.len(), 2);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+        }
+
+        let media_item_inode = photo_db
+            .upsert_media_item(&String::from("GoogleId1"), &String::from("Photo 1"), &now)
+            .unwrap();
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_MEDIA, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+            assert_eq!(response.entries.len(), 3);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_MEDIA);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+            assert_eq!(response.entries[2].ino, media_item_inode);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_MEDIA, fh, 0)?;
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn readdir_media_items() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
+            assert_eq!(response.entries.len(), 2);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
+        }
+
+        let album_inode = photo_db.upsert_album("GoogleId2", "Album1", &now).unwrap();
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
+            assert_eq!(response.entries.len(), 3);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+            assert_eq!(response.entries[2].ino, album_inode);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
+        }
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn readdir_media_items_in_albums() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
+            assert_eq!(response.entries.len(), 2);
+            assert_eq!(response.entries[0].ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ROOT);
+
+            fs.releasedir(&TestUniqRequest {}, FIXED_INODE_ALBUMS, fh, 0)?;
+        }
+
+        let album_inode = photo_db.upsert_album("GoogleId1", "Album1", &now).unwrap();
+        let media_item_inode = photo_db
+            .upsert_media_item(&String::from("GoogleId2"), &String::from("Photo 1"), &now)
+            .unwrap();
+        photo_db.upsert_media_item(&String::from("GoogleId3"), &String::from("Photo 2"), &now)?;
+        photo_db.upsert_media_item_in_album("GoogleId1", "GoogleId2")?;
+
+        {
+            let fh = fs.opendir(&TestUniqRequest {}, album_inode, 0)?.fh;
+
+            let response = fs.readdir(&TestUniqRequest {}, album_inode, fh, 0)?;
+            assert_eq!(response.entries.len(), 3);
+            assert_eq!(response.entries[0].ino, album_inode);
+            assert_eq!(response.entries[1].ino, FIXED_INODE_ALBUMS);
+            assert_eq!(response.entries[2].ino, media_item_inode);
+
+            fs.releasedir(&TestUniqRequest {}, album_inode, fh, 0)?;
+        }
 
         Result::Ok(())
     }

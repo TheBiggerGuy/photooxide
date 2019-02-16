@@ -56,6 +56,7 @@ pub trait RustFilesystem {
         fh: u64,
         flags: u32,
     ) -> FuseResult<()>;
+    fn destroy(&mut self, req: &dyn UniqRequest);
 }
 
 #[derive(Debug, new)]
@@ -168,5 +169,9 @@ where
             Ok(_) => reply.ok(),
             Err(error) => reply.error(error.libc_error_code()),
         }
+    }
+
+    fn destroy(&mut self, req: &fuse::Request<'_>) {
+        self.fs.destroy(req);
     }
 }
