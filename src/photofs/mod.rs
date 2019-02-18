@@ -1160,6 +1160,21 @@ mod test {
         Result::Ok(())
     }
 
+    #[test]
+    fn destroy_ok_if_open_files() -> Result<(), FuseError> {
+        let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
+        let photo_db = Arc::new(SqliteDb::in_memory()?);
+
+        let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
+
+        fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
+        fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?;
+
+        fs.destroy(&TestUniqRequest {});
+
+        Result::Ok(())
+    }
+
     #[derive(Debug)]
     struct TestUniqRequest {}
 

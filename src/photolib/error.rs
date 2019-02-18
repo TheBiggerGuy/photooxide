@@ -83,6 +83,16 @@ mod test {
     }
 
     #[test]
+    fn remote_photo_lib_error_from_io_error() {
+        let io_error = std::io::Error::new(std::io::ErrorKind::Other, "I/O Error for test");
+
+        match RemotePhotoLibError::from(io_error) {
+            RemotePhotoLibError::IoError(_) => assert!(true),
+            _ => assert!(false),
+        }
+    }
+
+    #[test]
     fn remote_photo_lib_error_source() {
         assert_eq!(
             RemotePhotoLibError::GoogleBackendError(photoslibrary1::Error::MissingAPIKey)
@@ -103,6 +113,17 @@ mod test {
                 .source()
                 .is_none()
         );
+        {
+            let io_error = std::io::Error::new(std::io::ErrorKind::Other, "I/O Error for test");
+            let io_error_str = io_error.to_string();
+            assert_eq!(
+                RemotePhotoLibError::IoError(io_error)
+                    .source()
+                    .unwrap()
+                    .to_string(),
+                io_error_str
+            );
+        }
     }
 
     #[test]
@@ -120,6 +141,23 @@ mod test {
                 RemotePhotoLibError::HttpClientError(hyper::Error::Method)
             ),
             "RemotePhotoLibError: HttpClientError(Method)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                RemotePhotoLibError::HttpApiError(hyper::status::StatusCode::Ok)
+            ),
+            "RemotePhotoLibError: HttpApiError(Ok)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                RemotePhotoLibError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "I/O Error for test"
+                ))
+            ),
+            "RemotePhotoLibError: IoError(Custom { kind: Other, error: StringError(\"I/O Error for test\") })"
         );
     }
 }
