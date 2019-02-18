@@ -121,5 +121,22 @@ mod test {
             ),
             "RemotePhotoLibError: HttpClientError(Method)"
         );
+        assert_eq!(
+            format!(
+                "{}",
+                RemotePhotoLibError::HttpApiError(hyper::status::StatusCode::Ok)
+            ),
+            "RemotePhotoLibError: HttpApiError(Ok)"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                RemotePhotoLibError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "I/O Error for test"
+                ))
+            ),
+            "RemotePhotoLibError: IoError(Custom { kind: Other, error: StringError(\"I/O Error for test\") })"
+        );
     }
 }
