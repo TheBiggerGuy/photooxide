@@ -575,12 +575,12 @@ mod test {
 
     use crate::domain::{GoogleId, Inode};
 
-    use crate::db::{PhotoDb, SqliteDb};
+    use crate::db::{PhotoDb, SqlitePhotoDb};
 
     #[test]
     fn lookup_root() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
@@ -625,7 +625,7 @@ mod test {
     #[test]
     fn lookup_albums() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
@@ -666,7 +666,7 @@ mod test {
     #[test]
     fn lookup_media_items() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         // Empty
@@ -714,7 +714,7 @@ mod test {
     #[test]
     fn lookup_media_item_in_album() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -754,7 +754,7 @@ mod test {
     #[test]
     fn getattr_static() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         {
@@ -795,7 +795,7 @@ mod test {
     #[test]
     fn getattr_dynamic() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -840,7 +840,7 @@ mod test {
     #[test]
     fn open_read_release_hello_txt() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?.fh;
@@ -868,7 +868,7 @@ mod test {
     #[test]
     fn read_offset() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?.fh;
@@ -900,7 +900,7 @@ mod test {
     #[test]
     fn read_size() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let open = fs.open(&TestUniqRequest {}, FIXED_INODE_HELLO_WORLD, 0)?;
@@ -927,7 +927,7 @@ mod test {
     #[test]
     fn read_media_item() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let inode: Inode;
@@ -966,7 +966,7 @@ mod test {
     #[test]
     fn opendir_multiple_calls() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let response1 = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?;
@@ -981,7 +981,7 @@ mod test {
     #[test]
     fn readdir_root() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?.fh;
@@ -1000,7 +1000,7 @@ mod test {
     #[test]
     fn readdir_albums() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -1038,7 +1038,7 @@ mod test {
     #[test]
     fn readdir_media_items() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -1074,7 +1074,7 @@ mod test {
     #[test]
     fn readdir_media_items_in_albums() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
@@ -1115,7 +1115,7 @@ mod test {
     #[test]
     fn readdir_invalid_inode_or_fh() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?.fh;
@@ -1137,7 +1137,7 @@ mod test {
     #[test]
     fn releasedir_no_previous_opendir() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         assert!(fs.releasedir(&TestUniqRequest {}, 1, 0, 0).is_err());
@@ -1148,7 +1148,7 @@ mod test {
     #[test]
     fn releasedir_from_previous_opendir() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 
         let fh = fs.opendir(&TestUniqRequest {}, FIXED_INODE_ROOT, 0)?.fh;
@@ -1163,7 +1163,7 @@ mod test {
     #[test]
     fn destroy_ok_if_open_files() -> Result<(), FuseError> {
         let photo_lib = Arc::new(Mutex::new(TestRemotePhotoLib::new()));
-        let photo_db = Arc::new(SqliteDb::in_memory()?);
+        let photo_db = Arc::new(SqlitePhotoDb::in_memory()?);
 
         let mut fs = PhotoFs::new(photo_lib.clone(), photo_db.clone());
 

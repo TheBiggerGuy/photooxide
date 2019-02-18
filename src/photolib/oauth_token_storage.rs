@@ -88,12 +88,12 @@ mod test {
 
     use crate::oauth2::Token;
 
-    use crate::db::SqliteDb;
+    use crate::db::SqliteTokenStorageDb;
 
     #[test]
     fn oauthtokenstorage_oath_token() -> Result<(), OauthTokenStorageError> {
         let scopes: Vec<&str> = Vec::new();
-        let mut db = OauthTokenStorage::new(Arc::new(SqliteDb::in_memory()?));
+        let mut db = OauthTokenStorage::new(Arc::new(SqliteTokenStorageDb::in_memory()?));
 
         assert!(db.get(0, &scopes)?.is_none());
 

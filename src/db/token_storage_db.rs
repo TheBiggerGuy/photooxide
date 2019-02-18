@@ -5,14 +5,14 @@ use std::sync::Mutex;
 use rusqlite;
 use rusqlite::types::ToSql;
 
-use crate::db::{DbError, SqliteDb, TableName};
+use crate::db::{DbError, TableName};
 
 pub trait TokenStorageDb: Sized {
     fn get_oath_token(&self, scope_hash: u64) -> Result<Option<String>, DbError>;
     fn set_oath_token(&self, scope_hash: u64, token: Option<String>) -> Result<(), DbError>;
 }
 
-pub fn ensure_schema_token_storage(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
+pub fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
     let db = db.lock()?;
 
     db.execute(
@@ -30,7 +30,32 @@ pub fn ensure_schema_token_storage(db: &Mutex<rusqlite::Connection>) -> Result<(
     Result::Ok(())
 }
 
-impl TokenStorageDb for SqliteDb {
+pub struct SqliteTokenStorageDb {
+    db: Mutex<rusqlite::Connection>,
+}
+
+unsafe impl Send for SqliteTokenStorageDb {}
+unsafe impl Sync for SqliteTokenStorageDb {}
+
+impl SqliteTokenStorageDb {
+    pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<SqliteTokenStorageDb, DbError> {
+        let connection = rusqlite::Connection::open(path)?;
+        SqliteTokenStorageDb::try_new(Mutex::new(connection))
+    }
+
+    #[cfg(test)]
+    pub fn in_memory() -> Result<SqliteTokenStorageDb, DbError> {
+        let connection = rusqlite::Connection::open_in_memory()?;
+        SqliteTokenStorageDb::try_new(Mutex::new(connection))
+    }
+
+    fn try_new(db: Mutex<rusqlite::Connection>) -> Result<SqliteTokenStorageDb, DbError> {
+        ensure_schema(&db)?;
+        Result::Ok(SqliteTokenStorageDb { db })
+    }
+}
+
+impl TokenStorageDb for SqliteTokenStorageDb {
     fn get_oath_token(&self, scope_hash: u64) -> Result<Option<String>, DbError> {
         let scope_hash = scope_hash as i64;
         let result: Result<String, rusqlite::Error> = self.db.lock()?.query_row(
@@ -80,7 +105,7 @@ mod test {
 
     #[test]
     fn sqlitedb_oath_token() {
-        let db = SqliteDb::in_memory().unwrap();
+        let db = SqliteTokenStorageDb::in_memory().unwrap();
 
         assert!(db.get_oath_token(0).unwrap().is_none());
 

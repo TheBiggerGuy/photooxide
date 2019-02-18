@@ -35,7 +35,7 @@ mod error;
 use crate::error::PhotoOxideError;
 
 mod db;
-use crate::db::SqliteDb;
+use crate::db::{SqlitePhotoDb, SqliteTokenStorageDb};
 
 mod photolib;
 use crate::photolib::{HttpRemotePhotoLib, OauthTokenStorage};
@@ -52,7 +52,8 @@ fn main() -> Result<(), PhotoOxideError> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("photooxide=info,photooxide::db::debug,photooxide::photofs=error,photooxide::photolib=debug")).init();
     info!("Logging init");
 
-    let db = Arc::new(SqliteDb::from_path("cache.sqlite")?);
+    let photo_db = Arc::new(SqlitePhotoDb::from_path("cache.sqlite")?);
+    let token_storage_db = Arc::new(SqliteTokenStorageDb::from_path("cache.sqlite")?);
 
     let auth;
     {
@@ -63,7 +64,7 @@ fn main() -> Result<(), PhotoOxideError> {
             .installed
             .unwrap();
 
-        let token_storage = OauthTokenStorage::new(db.clone());
+        let token_storage = OauthTokenStorage::new(token_storage_db);
         auth = Authenticator::new(
             &secret,
             DefaultAuthenticatorDelegate,
@@ -91,7 +92,7 @@ fn main() -> Result<(), PhotoOxideError> {
         )));
     }
 
-    let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), db.clone()));
+    let fs = RustFilesystemReal::new(PhotoFs::new(remote_photo_lib.clone(), photo_db.clone()));
 
     let executor;
     let mut scheduled_tasks: Vec<(&str, scheduled_executor::executor::TaskHandle)> = Vec::new();
@@ -100,11 +101,11 @@ fn main() -> Result<(), PhotoOxideError> {
         let updaters: Vec<Box<dyn BackgroundUpdate>> = vec![
             Box::new(BackgroundAlbumUpdate {
                 remote_photo_lib: remote_photo_lib.clone(),
-                db: db.clone(),
+                db: photo_db.clone(),
             }),
             Box::new(BackgroundMediaUpdate {
                 remote_photo_lib: remote_photo_lib.clone(),
-                db: db.clone(),
+                db: photo_db.clone(),
             }),
         ];
         for updater in updaters {

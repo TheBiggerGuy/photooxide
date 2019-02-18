@@ -5,7 +5,7 @@ use crate::oauth2;
 
 use chrono::Utc;
 
-use crate::db::{PhotoDb, PhotoDbRo, SqliteDb};
+use crate::db::{PhotoDb, PhotoDbRo, SqlitePhotoDb};
 use crate::photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
 
 pub trait BackgroundUpdate: Sync + Send {
@@ -24,7 +24,7 @@ where
     A: oauth2::GetToken,
 {
     pub remote_photo_lib: Arc<Mutex<HttpRemotePhotoLib<C, A>>>,
-    pub db: Arc<SqliteDb>,
+    pub db: Arc<SqlitePhotoDb>,
 }
 
 unsafe impl<C, A> Sync for BackgroundAlbumUpdate<C, A>
@@ -119,7 +119,7 @@ where
     A: oauth2::GetToken,
 {
     pub remote_photo_lib: Arc<Mutex<HttpRemotePhotoLib<C, A>>>,
-    pub db: Arc<SqliteDb>,
+    pub db: Arc<SqlitePhotoDb>,
 }
 
 unsafe impl<C, A> Sync for BackgroundMediaUpdate<C, A>
