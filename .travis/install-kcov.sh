@@ -1,5 +1,8 @@
-#!/bin/bash
-set -ev
+#!/usr/bin/env bash
+
+set -o verbose
+set -o errexit
+set -o pipefail
 
 KCOV_VERSION="${1}"
 KCOV_SHA256_HASH="${2}"
