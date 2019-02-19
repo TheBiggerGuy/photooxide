@@ -3,10 +3,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::oauth2;
 
-use chrono::Utc;
+use chrono::{Datelike, Utc};
+
+use scoped_threadpool::Pool;
 
 use crate::db::{PhotoDb, PhotoDbRo, SqliteDb};
-use crate::photolib::{HttpRemotePhotoLib, RemotePhotoLibMetaData};
+use crate::photolib::{HttpRemotePhotoLib, MediaListFilter, RemotePhotoLibMetaData};
 
 pub trait BackgroundUpdate: Sync + Send {
     fn update(&self) -> Result<(), String>;
@@ -135,6 +137,41 @@ where
 {
 }
 
+impl<C, A> BackgroundMediaUpdate<C, A>
+where
+    C: BorrowMut<hyper::Client>,
+    A: oauth2::GetToken,
+{
+    fn update_year(&self, year: i32) -> Result<(), String> {
+        let media_items;
+        {
+            let remote_photo_lib_unlocked = self
+                .remote_photo_lib
+                .lock()
+                .map_err(|err| format!("{:?}", err))?;
+            media_items = remote_photo_lib_unlocked
+                .media_items(Option::Some(MediaListFilter::Year(year)))
+                .map_err(|err| format!("{:?}", err))?;
+        }
+        for media_item in media_items {
+            match self
+                .db
+                .upsert_media_item(&media_item.google_id(), &media_item.name, &Utc::now())
+            {
+                Ok(inode) => debug!(
+                    "upserted media_item='{:?}' into inode={:?}",
+                    media_item, inode
+                ),
+                Err(error) => error!(
+                    "Failed to upsert media_item='{:?}' due to {:?}",
+                    media_item, error
+                ),
+            }
+        }
+        Result::Ok(())
+    }
+}
+
 impl<C, A> BackgroundUpdate for BackgroundMediaUpdate<C, A>
 where
     C: BorrowMut<hyper::Client>,
@@ -143,32 +180,21 @@ where
     fn update(&self) -> Result<(), String> {
         {
             warn!("Start background media_items refresh");
-            let media_items;
-            {
-                let remote_photo_lib_unlocked = self
-                    .remote_photo_lib
-                    .lock()
-                    .map_err(|err| format!("{:?}", err))?;
-                media_items = remote_photo_lib_unlocked
-                    .media_items()
-                    .map_err(|err| format!("{:?}", err))?;
-            }
-            for media_item in media_items {
-                match self.db.upsert_media_item(
-                    &media_item.google_id(),
-                    &media_item.name,
-                    &Utc::now(),
-                ) {
-                    Ok(inode) => debug!(
-                        "upserted media_item='{:?}' into inode={:?}",
-                        media_item, inode
-                    ),
-                    Err(error) => error!(
-                        "Failed to upsert media_item='{:?}' due to {:?}",
-                        media_item, error
-                    ),
+
+            let mut pool = Pool::new(4);
+
+            pool.scoped(|scoped| {
+                for year in 1990..=Utc::now().date().year() {
+                    scoped.execute(move || match self.update_year(year) {
+                        Ok(_) => {
+                            debug!("OK on year {}", year);
+                        }
+                        Err(err) => {
+                            error!("{}", err);
+                        }
+                    });
                 }
-            }
+            });
             warn!("End background media_items refresh");
         }
 

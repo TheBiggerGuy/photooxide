@@ -30,6 +30,7 @@ users = "0.8"
 scheduled-executor = "0.4"
 derive-new = "0.5"
 rusqlite = { version = "0.16.0", features = ["bundled"] }
+scoped_threadpool = "0.1.*"
 
 [badges]
 travis-ci = { repository = "TheBiggerGuy/photooxide" }

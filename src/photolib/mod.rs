@@ -5,7 +5,9 @@ use std::option::Option;
 use std::result::Result;
 
 use crate::oauth2;
-use crate::photoslibrary1::{PhotosLibrary, SearchMediaItemsRequest};
+use crate::photoslibrary1::{
+    self, ListMediaItemsResponse, PhotosLibrary, SearchMediaItemsRequest, SearchMediaItemsResponse,
+};
 use hyper;
 
 use crate::domain::*;
@@ -15,6 +17,12 @@ pub use self::error::RemotePhotoLibError;
 
 mod oauth_token_storage;
 pub use self::oauth_token_storage::{OauthTokenStorage, OauthTokenStorageError};
+
+#[derive(Debug, Clone, Copy)]
+pub enum MediaListFilter<'a> {
+    Album(&'a GoogleId),
+    Year(i32),
+}
 
 #[derive(Debug, new)]
 pub struct ItemListing {
@@ -29,7 +37,10 @@ impl ItemListing {
 }
 
 pub trait RemotePhotoLibMetaData: Sized {
-    fn media_items(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
+    fn media_items(
+        &self,
+        filter: Option<MediaListFilter>,
+    ) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
 
     fn albums(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
     fn album(&self, google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError>;
@@ -68,48 +79,138 @@ where
     }
 }
 
+#[derive(Debug)]
+struct SearchListResponse {
+    media_items: Vec<photoslibrary1::MediaItem>,
+    next_page_token: Option<String>,
+}
+
+fn unwrap_list_response(
+    response: photoslibrary1::Result<(hyper::client::response::Response, ListMediaItemsResponse)>,
+) -> Result<SearchListResponse, RemotePhotoLibError> {
+    match response {
+        Err(e) => {
+            error!("{}", e);
+            Result::Err(RemotePhotoLibError::from(e))
+        }
+        Ok(res) => {
+            debug!("Success: listing photos");
+            match res.1.media_items {
+                Some(media_items) => Result::Ok(SearchListResponse {
+                    media_items,
+                    next_page_token: res.1.next_page_token,
+                }),
+                None => {
+                    warn!("Media items list responded successfully but with an empty list of items. HTTP status code: {}", res.0.status);
+                    Result::Ok(SearchListResponse {
+                        media_items: Vec::new(),
+                        next_page_token: res.1.next_page_token,
+                    })
+                }
+            }
+        }
+    }
+}
+
+fn unwrap_search_response(
+    response: photoslibrary1::Result<(hyper::client::response::Response, SearchMediaItemsResponse)>,
+) -> Result<SearchListResponse, RemotePhotoLibError> {
+    match response {
+        Err(e) => {
+            error!("{}", e);
+            Result::Err(RemotePhotoLibError::from(e))
+        }
+        Ok(res) => {
+            debug!("Success: listing photos");
+            match res.1.media_items {
+                Some(media_items) => Result::Ok(SearchListResponse {
+                    media_items,
+                    next_page_token: res.1.next_page_token,
+                }),
+                None => {
+                    warn!("Media items list responded successfully but with an empty list of items. HTTP status code: {}", res.0.status);
+                    Result::Ok(SearchListResponse {
+                        media_items: Vec::new(),
+                        next_page_token: res.1.next_page_token,
+                    })
+                }
+            }
+        }
+    }
+}
+
 impl<C, A> RemotePhotoLibMetaData for HttpRemotePhotoLib<C, A>
 where
     C: BorrowMut<hyper::Client>,
     A: oauth2::GetToken,
 {
-    fn media_items(&self) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
+    fn media_items(
+        &self,
+        filter: Option<MediaListFilter>,
+    ) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
         let mut all_media_items: Vec<ItemListing> = Vec::new();
         let mut page_token: Option<String> = Option::None;
         loop {
-            let mut result_builder = self.photos_library.media_items().list().page_size(50);
-            if page_token.is_some() {
-                result_builder = result_builder.page_token(page_token.unwrap().as_str());
+            let remote_result = match filter {
+                Some(filter) => {
+                    let mut album_id_filter = Option::None;
+                    let mut other_filter = Option::None;
+                    match filter {
+                        MediaListFilter::Album(google_id) => {
+                            album_id_filter = Option::Some(String::from(google_id));
+                        }
+                        MediaListFilter::Year(year) => {
+                            let date = photoslibrary1::Date {
+                                year: Option::Some(year),
+                                day: Option::None,
+                                month: Option::None,
+                            };
+                            let date_filter = photoslibrary1::DateFilter {
+                                ranges: Option::None,
+                                dates: Option::Some(vec![date]),
+                            };
+                            let full_filter = photoslibrary1::Filters {
+                                date_filter: Option::Some(date_filter),
+                                content_filter: Option::None,
+                                include_archived_media: Option::None,
+                                exclude_non_app_created_data: Option::None,
+                                media_type_filter: Option::None,
+                            };
+                            other_filter = Option::Some(full_filter);
+                        }
+                    }
+                    let request = SearchMediaItemsRequest {
+                        page_token,
+                        page_size: Option::Some(50),
+                        filters: other_filter,
+                        album_id: album_id_filter,
+                    };
+                    let remote_result = self.photos_library.media_items().search(request).doit();
+
+                    unwrap_search_response(remote_result)
+                }
+                None => {
+                    let mut result_builder = self.photos_library.media_items().list().page_size(50);
+                    if page_token.is_some() {
+                        result_builder = result_builder.page_token(page_token.unwrap().as_str());
+                    }
+                    let remote_result = result_builder.doit();
+
+                    unwrap_list_response(remote_result)
+                }
+            }?;
+
+            for media_item in remote_result.media_items {
+                all_media_items.push(ItemListing::new(
+                    media_item.id.unwrap(),
+                    media_item.filename.unwrap(),
+                ))
             }
-            let remote_result = result_builder.doit();
 
-            match remote_result {
-                Err(e) => {
-                    error!("{}", e);
-                    return Result::Err(RemotePhotoLibError::from(e));
-                }
-                Ok(res) => {
-                    debug!("Success: listing photos");
-                    match res.1.media_items {
-                        Some(media_items) => {
-                            for media_item in media_items {
-                                all_media_items.push(ItemListing::new(
-                                    media_item.id.unwrap(),
-                                    media_item.filename.unwrap(),
-                                ))
-                            }
-                        }
-                        None => {
-                            warn!("Media items list responded successfully but with an empty list of items. HTTP status code: {}", res.0.status);
-                        }
-                    }
-
-                    page_token = res.1.next_page_token;
-                    if page_token.is_none() {
-                        break;
-                    }
-                }
-            };
+            page_token = remote_result.next_page_token;
+            if page_token.is_none() {
+                break;
+            }
         }
         Result::Ok(all_media_items)
     }
@@ -148,39 +249,7 @@ where
     }
 
     fn album(&self, google_id: &GoogleId) -> Result<Vec<ItemListing>, RemotePhotoLibError> {
-        let mut all_media_items_in_album: Vec<ItemListing> = Vec::new();
-        let mut page_token: Option<String> = Option::None;
-        loop {
-            let request = SearchMediaItemsRequest {
-                page_token,
-                page_size: Option::Some(50),
-                filters: Option::None,
-                album_id: Option::Some(String::from(google_id)),
-            };
-            let remote_result = self.photos_library.media_items().search(request).doit();
-
-            match remote_result {
-                Err(e) => {
-                    error!("{}", e);
-                    return Result::Err(RemotePhotoLibError::from(e));
-                }
-                Ok(res) => {
-                    debug!("Success: listing media_items in album");
-                    for media_item in res.1.media_items.unwrap() {
-                        all_media_items_in_album.push(ItemListing::new(
-                            media_item.id.unwrap(),
-                            media_item.filename.unwrap(),
-                        ));
-                    }
-
-                    page_token = res.1.next_page_token;
-                    if page_token.is_none() {
-                        break;
-                    }
-                }
-            };
-        }
-        Result::Ok(all_media_items_in_album)
+        self.media_items(Option::Some(MediaListFilter::Album(google_id)))
     }
 }
 
