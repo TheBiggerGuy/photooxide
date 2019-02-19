@@ -80,7 +80,8 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
                 name              TEXT NOT NULL,
                 inode             INTEGER NOT NULL,
                 last_remote_check INTEGER NOT NULL,
-                PRIMARY KEY (google_id)
+                PRIMARY KEY (google_id),
+                UNIQUE (inode)
             );",
             TableName::AlbumsAndMediaItems
         ),
