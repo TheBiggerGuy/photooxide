@@ -90,11 +90,18 @@ where
                 }
                 Ok(res) => {
                     debug!("Success: listing photos");
-                    for media_item in res.1.media_items.unwrap() {
-                        all_media_items.push(ItemListing::new(
-                            media_item.id.unwrap(),
-                            media_item.filename.unwrap(),
-                        ))
+                    match res.1.media_items {
+                        Some(media_items) => {
+                            for media_item in media_items {
+                                all_media_items.push(ItemListing::new(
+                                    media_item.id.unwrap(),
+                                    media_item.filename.unwrap(),
+                                ))
+                            }
+                        }
+                        None => {
+                            warn!("Media items list responded successfully but with an empty list of items. HTTP status code: {}", res.0.status);
+                        }
                     }
 
                     page_token = res.1.next_page_token;
