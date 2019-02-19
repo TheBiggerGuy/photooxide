@@ -13,7 +13,7 @@ use crate::domain::{
     GoogleId, Inode, MediaTypes, PhotoDbAlbum, PhotoDbMediaItem, PhotoDbMediaItemAlbum, UtcDateTime,
 };
 
-use crate::db::{DbError, NextInodeDb, SqliteNextInodeDb, TableName};
+use crate::db::{DbError, TableName};
 
 #[derive(Debug)]
 pub enum Filter<'a> {
@@ -133,7 +133,6 @@ fn ensure_schema(db: &Mutex<rusqlite::Connection>) -> Result<(), DbError> {
 
 pub struct SqlitePhotoDb {
     db: Mutex<rusqlite::Connection>,
-    inode_db: SqliteNextInodeDb,
 }
 
 unsafe impl Send for SqlitePhotoDb {}
@@ -349,12 +348,11 @@ impl PhotoDb for SqlitePhotoDb {
         filename: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
-        let inode = self.inode_db.get_and_update_inode()?;
         self.upsert_x(
             id,
             MediaTypes::MediaItem,
             filename,
-            inode,
+            Option::None,
             &last_modified_time,
         )
     }
@@ -365,8 +363,13 @@ impl PhotoDb for SqlitePhotoDb {
         title: &str,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
-        let inode = self.inode_db.get_and_update_inode()?;
-        self.upsert_x(id, MediaTypes::Album, title, inode, &last_modified_time)
+        self.upsert_x(
+            id,
+            MediaTypes::Album,
+            title,
+            Option::None,
+            &last_modified_time,
+        )
     }
 
     fn upsert_media_item_in_album(
@@ -384,22 +387,19 @@ impl PhotoDb for SqlitePhotoDb {
 
 impl SqlitePhotoDb {
     pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<SqlitePhotoDb, DbError> {
-        let connection = rusqlite::Connection::open(&path)?;
-        let db = Mutex::new(connection);
-        ensure_schema(&db)?;
-        let inode_db = SqliteNextInodeDb::from_path(path)?;
-
-        Result::Ok(SqlitePhotoDb { db, inode_db })
+        let connection = rusqlite::Connection::open(path)?;
+        SqlitePhotoDb::try_new(Mutex::new(connection))
     }
 
     #[cfg(test)]
     pub fn in_memory() -> Result<SqlitePhotoDb, DbError> {
         let connection = rusqlite::Connection::open_in_memory()?;
-        let db = Mutex::new(connection);
-        ensure_schema(&db)?;
-        let inode_db = SqliteNextInodeDb::in_memory()?;
+        SqlitePhotoDb::try_new(Mutex::new(connection))
+    }
 
-        Result::Ok(SqlitePhotoDb { db, inode_db })
+    fn try_new(db: Mutex<rusqlite::Connection>) -> Result<SqlitePhotoDb, DbError> {
+        ensure_schema(&db)?;
+        Result::Ok(SqlitePhotoDb { db })
     }
 
     fn last_updated_x(&self, media_type: MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
@@ -418,17 +418,41 @@ impl SqlitePhotoDb {
         id: &GoogleId,
         media_type: MediaTypes,
         name: &str,
-        inode: Inode,
+        inode: Option<Inode>,
         last_modified_time: &UtcDateTime,
     ) -> Result<Inode, DbError> {
+        let db_unlocked = self.db.lock()?;
+
+        let new_inode = match inode {
+            Some(inode) => inode,
+            None => self.next_inode(&db_unlocked)?,
+        };
+
         let media_type = format!("{}", media_type);
-        let inode_signed = inode as i64;
+        let inode_signed = new_inode as i64;
         let last_modified_time = last_modified_time.timestamp();
-        self.db.lock()?.execute(
+
+        db_unlocked.execute(
             &format!("INSERT OR REPLACE INTO '{}' (google_id, type, name, inode, last_remote_check) VALUES (?, ?, ?, ?, ?);", TableName::AlbumsAndMediaItems),
             &[&id as &dyn ToSql, &media_type, &name, &inode_signed, &last_modified_time],
         )?;
-        Result::Ok(inode)
+
+        Result::Ok(new_inode)
+    }
+
+    fn next_inode(&self, unlocked_db: &rusqlite::Connection) -> Result<Inode, DbError> {
+        let result: Result<i64, rusqlite::Error> = unlocked_db.query_row(
+            &format!(
+                "SELECT IFNULL(MAX(inode),100)+1 as inode FROM '{}';",
+                TableName::AlbumsAndMediaItems
+            ),
+            iter::empty::<&dyn ToSql>(),
+            |row| row.get(0),
+        );
+        match result {
+            Err(error) => Result::Err(DbError::from(error)),
+            Ok(inode) => Result::Ok(inode as Inode),
+        }
     }
 }
 
@@ -631,16 +655,14 @@ mod test {
         let now_unix = Utc::now().timestamp();
         let now = Utc::timestamp(&Utc, now_unix, 0);
 
-        assert_eq!(db.inode_db.get_and_update_inode()?, 101);
         assert_eq!(
             db.upsert_media_item(&String::from("GoogleId1"), &String::from("Title 1"), &now,)?,
-            102
+            101
         );
         assert_eq!(
             db.upsert_album(&String::from("GoogleId2"), &String::from("Album 1"), &now,)?,
-            103
+            102
         );
-        assert_eq!(db.inode_db.get_and_update_inode()?, 104);
 
         Result::Ok(())
     }
@@ -854,6 +876,28 @@ mod test {
         assert_eq!(db.exists("GoogleId1")?, true);
         assert_eq!(db.exists("GoogleId2")?, true);
         assert_eq!(db.exists("GoogleId3")?, false);
+
+        Result::Ok(())
+    }
+
+    #[test]
+    fn sqlitedb_next_inode() -> Result<(), DbError> {
+        let db = SqlitePhotoDb::in_memory()?;
+
+        let now = Utc::timestamp(&Utc, Utc::now().timestamp(), 0);
+
+        {
+            let unlocked_db = db.db.lock()?;
+            assert_eq!(db.next_inode(&unlocked_db)?, 101);
+            assert_eq!(db.next_inode(&unlocked_db)?, 101);
+        }
+
+        db.upsert_media_item(&String::from("GoogleId2"), &String::from("Title 1"), &now)?;
+
+        {
+            let unlocked_db = db.db.lock()?;
+            assert_eq!(db.next_inode(&unlocked_db)?, 102);
+        }
 
         Result::Ok(())
     }
