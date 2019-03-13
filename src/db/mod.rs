@@ -337,19 +337,11 @@ impl PhotoDbRo for SqliteDb {
 
     fn exists(&self, id: &GoogleId) -> Result<bool, DbError> {
         let db = self.db.lock()?;
-        let result: Result<(), rusqlite::Error> = db.query_row(
-            &format!(
-                "SELECT 1 FROM '{}' WHERE google_id = ?;",
-                TableName::AlbumsAndMediaItems
-            ),
-            &[&id],
-            |_row| Result::Ok(()),
-        );
-        match result {
-            Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(false),
-            Err(error) => Result::Err(DbError::from(error)),
-            Ok(_) => Result::Ok(true),
-        }
+        let mut statment = db.prepare(&format!(
+            "SELECT 1 FROM '{}' WHERE google_id = ?;",
+            TableName::AlbumsAndMediaItems
+        ))?;
+        statment.exists(&[&id]).map_err(DbError::from)
     }
 }
 
