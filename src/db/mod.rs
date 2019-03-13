@@ -150,36 +150,36 @@ pub struct SqliteDb {
 unsafe impl Send for SqliteDb {}
 unsafe impl Sync for SqliteDb {}
 
-fn row_to_album(row: &rusqlite::Row<'_, '_>) -> PhotoDbAlbum {
+fn row_to_album(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhotoDbAlbum> {
     row_to_item(row)
 }
 
-fn row_to_media_item(row: &rusqlite::Row<'_, '_>) -> PhotoDbMediaItem {
+fn row_to_media_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhotoDbMediaItem> {
     row_to_item(row)
 }
 
-fn row_to_item(row: &rusqlite::Row<'_, '_>) -> PhotoDbMediaItemAlbum {
-    let google_id: String = row.get(0);
-    let media_type: String = row.get(1);
-    let name: String = row.get(2);
-    let last_remote_check: i64 = row.get(3);
-    let inode: i64 = row.get(4);
-    PhotoDbMediaItemAlbum::new(
+fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<PhotoDbMediaItemAlbum> {
+    let google_id: String = row.get(0)?;
+    let media_type: String = row.get(1)?;
+    let name: String = row.get(2)?;
+    let last_remote_check: i64 = row.get(3)?;
+    let inode: i64 = row.get(4)?;
+    Result::Ok(PhotoDbMediaItemAlbum::new(
         google_id,
         name,
         MediaTypes::from(media_type.as_str()),
         Utc::timestamp(&Utc, last_remote_check, 0),
         inode as u64,
-    )
+    ))
 }
 
-fn row_to_option_datetime(row: &rusqlite::Row<'_, '_>) -> Result<Option<UtcDateTime>, DbError> {
-    match row.get_checked(0) {
+fn row_to_option_datetime(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<UtcDateTime>> {
+    match row.get(0) {
         Ok(last_modified) => Result::Ok(Option::Some(Utc::timestamp(&Utc, last_modified, 0))),
         Err(rusqlite::Error::InvalidColumnType(_, rusqlite::types::Type::Null)) => {
             Result::Ok(Option::None)
         }
-        Err(error) => Result::Err(DbError::from(error)),
+        Err(error) => Result::Err(error),
     }
 }
 
@@ -337,19 +337,11 @@ impl PhotoDbRo for SqliteDb {
 
     fn exists(&self, id: &GoogleId) -> Result<bool, DbError> {
         let db = self.db.lock()?;
-        let result: Result<(), rusqlite::Error> = db.query_row(
-            &format!(
-                "SELECT 1 FROM '{}' WHERE google_id = ?;",
-                TableName::AlbumsAndMediaItems
-            ),
-            &[&id],
-            |_row| (),
-        );
-        match result {
-            Err(rusqlite::Error::QueryReturnedNoRows) => Result::Ok(false),
-            Err(error) => Result::Err(DbError::from(error)),
-            Ok(_) => Result::Ok(true),
-        }
+        let mut statment = db.prepare(&format!(
+            "SELECT 1 FROM '{}' WHERE google_id = ?;",
+            TableName::AlbumsAndMediaItems
+        ))?;
+        statment.exists(&[&id]).map_err(DbError::from)
     }
 }
 
@@ -413,14 +405,17 @@ impl SqliteDb {
     }
 
     fn last_updated_x(&self, media_type: MediaTypes) -> Result<Option<UtcDateTime>, DbError> {
-        self.db.lock()?.query_row(
-            &format!(
+        self.db
+            .lock()?
+            .query_row(
+                &format!(
                 "SELECT MIN(last_remote_check) AS min_last_remote_check FROM '{}' WHERE type = ?;",
                 TableName::AlbumsAndMediaItems
             ),
-            &[&format!("{}", media_type)],
-            row_to_option_datetime,
-        )?
+                &[&format!("{}", media_type)],
+                row_to_option_datetime,
+            )
+            .map_err(DbError::from)
     }
 
     fn upsert_x(
