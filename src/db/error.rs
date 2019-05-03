@@ -43,12 +43,30 @@ impl fmt::Display for DbError {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn db_error_from_rusqlite() -> std::result::Result<(), ()> {
         match DbError::from(rusqlite::Error::SqliteSingleThreadedMode) {
             DbError::SqlError(_) => Result::Ok(()),
             _ => Result::Err(()),
+        }
+    }
+
+    #[test]
+    fn db_error_from_syncerror() -> std::result::Result<(), ()> {
+        match DbError::from(sync::PoisonError::new(())) {
+            DbError::LockingError => Result::Ok(()),
+            _ => Result::Err(()),
+        }
+    }
+
+    #[test]
+    fn db_error_source() {
+        assert!(DbError::LockingError.source().is_none());
+        {
+            let source = rusqlite::Error::SqliteSingleThreadedMode;
+            assert!(DbError::SqlError(source).source().is_some());
         }
     }
 
