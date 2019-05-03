@@ -5,3 +5,15 @@
 [![](https://tokei.rs/b1/github/TheBiggerGuy/photooxide)](https://github.com/TheBiggerGuy/photooxide).
 
 A Google Photos FUSE Filesystem
+
+## Features
+* Image and video support
+* Folder per album
+* Local DB for fast listing
+
+# Development
+
+## Test running
+```bash
+mkdir -p photo_mount; fusermount -u photo_mount; cargo run -- photo_mount; fusermount -u photo_mount
+```
