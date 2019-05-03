@@ -67,28 +67,28 @@ mod test {
     use super::*;
 
     #[test]
-    fn remote_photo_lib_error_from_photoslibrary_error() {
+    fn remote_photo_lib_error_from_photoslibrary_error() -> std::result::Result<(), ()> {
         match RemotePhotoLibError::from(photoslibrary1::Error::MissingAPIKey) {
-            RemotePhotoLibError::GoogleBackendError(_) => assert!(true),
-            _ => assert!(false),
+            RemotePhotoLibError::GoogleBackendError(_) => Result::Ok(()),
+            _ => Result::Err(()),
         }
     }
 
     #[test]
-    fn remote_photo_lib_error_from_hyper_error() {
+    fn remote_photo_lib_error_from_hyper_error() -> std::result::Result<(), ()> {
         match RemotePhotoLibError::from(hyper::Error::Method) {
-            RemotePhotoLibError::HttpClientError(_) => assert!(true),
-            _ => assert!(false),
+            RemotePhotoLibError::HttpClientError(_) => Result::Ok(()),
+            _ => Result::Err(()),
         }
     }
 
     #[test]
-    fn remote_photo_lib_error_from_io_error() {
+    fn remote_photo_lib_error_from_io_error() -> std::result::Result<(), ()> {
         let io_error = std::io::Error::new(std::io::ErrorKind::Other, "I/O Error for test");
 
         match RemotePhotoLibError::from(io_error) {
-            RemotePhotoLibError::IoError(_) => assert!(true),
-            _ => assert!(false),
+            RemotePhotoLibError::IoError(_) => Result::Ok(()),
+            _ => Result::Err(()),
         }
     }
 

@@ -45,10 +45,10 @@ mod test {
     use super::*;
 
     #[test]
-    fn db_error_from_rusqlite() {
+    fn db_error_from_rusqlite() -> std::result::Result<(), ()> {
         match DbError::from(rusqlite::Error::SqliteSingleThreadedMode) {
-            DbError::SqlError(_) => assert!(true),
-            _ => assert!(false),
+            DbError::SqlError(_) => Result::Ok(()),
+            _ => Result::Err(()),
         }
     }
 
