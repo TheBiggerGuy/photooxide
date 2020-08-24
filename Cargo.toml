@@ -29,7 +29,7 @@ chrono = "0.4"
 users = "0.9"
 scheduled-executor = "0.4"
 derive-new = "0.5"
-rusqlite = { version = "0.18", optional = false, features = [ "bundled", "chrono" ] }
+rusqlite = { version = "0.24", optional = false, features = [ "bundled", "chrono" ] }
 
 [badges]
 travis-ci = { repository = "TheBiggerGuy/photooxide" }
