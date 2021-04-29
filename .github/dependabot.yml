@@ -1,0 +1,40 @@
+version: 2
+updates:
+- package-ecosystem: cargo
+  directory: "/"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 10
+  assignees:
+  - TheBiggerGuy
+  ignore:
+  - dependency-name: hyper-rustls
+    versions:
+    - "> 0.6.2"
+  - dependency-name: libc
+    versions:
+    - 0.2.84
+    - 0.2.85
+    - 0.2.86
+    - 0.2.87
+    - 0.2.88
+    - 0.2.89
+    - 0.2.90
+    - 0.2.91
+    - 0.2.92
+    - 0.2.93
+  - dependency-name: serde
+    versions:
+    - 1.0.123
+    - 1.0.124
+  - dependency-name: serde_json
+    versions:
+    - 1.0.61
+    - 1.0.62
+    - 1.0.63
+  - dependency-name: env_logger
+    versions:
+    - 0.8.2
+  - dependency-name: hyper
+    versions:
+    - 0.12.35
